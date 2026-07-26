@@ -87,6 +87,23 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLPRecoveryTool)
 };
 
+
+//block visualization
+class BlockVisualizer : public juce::Component
+{
+public:
+    BlockVisualizer();
+    void paint(juce::Graphics& g) override;
+    void updateBlocks(const std::vector<FLPRecovery::BlockInfo>& blocks);
+    void setBlockSize(int size) { m_blockSize = size; }
+
+private:
+    std::vector<FLPRecovery::BlockInfo> m_blocks;
+    int m_blockSize = 10; // pixels per block
+    juce::Colour getBlockColour(const FLPRecovery::BlockInfo& block);
+};
+
+
 // ─── Main Application Class ────────────────────────────────────────────────
 
 class FLPRecoveryApplication : public juce::JUCEApplication

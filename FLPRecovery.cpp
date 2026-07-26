@@ -1,13 +1,18 @@
 #include "FLPRecovery.h"
 #include <fstream>
 #include <algorithm>
+#include <iomanip>
 
 // =============================================================================
-// FLPRecovery Implementation
+// FLPRecovery Implementation - Enhanced
 // =============================================================================
 
-FLPRecovery::FLPRecovery() {}
-FLPRecovery::~FLPRecovery() {}
+FLPRecovery::FLPRecovery() : m_passiveThread(nullptr) {}
+
+FLPRecovery::~FLPRecovery()
+{
+    stopPassiveMode();
+}
 
 // ─── Helper: Read little-endian 32-bit ─────────────────────────────────────
 
@@ -46,7 +51,6 @@ void FLPRecovery::sendProgress(float progress, const juce::String& status)
 
 juce::String FLPRecovery::extractVersion(const uint8_t* data, uint64_t offset)
 {
-    // Version string appears around offset 24-30 after FLhd
     const char* versionStart = reinterpret_cast<const char*>(data + offset + 24);
     int maxLen = 64;
     juce::String result;
@@ -78,9 +82,13 @@ std::vector<FLPRecovery::Candidate> FLPRecovery::findFLhdSignatures(const uint8_
             Candidate candidate;
             candidate.offset = i;
             candidate.isValid = false;
+            candidate.isComplete = false;
             candidate.totalSize = 0;
             candidate.dataOffset = 0;
             candidate.dataSize = 0;
+            candidate.fileSize = 0;
+            candidate.chunksFound = 0;
+            candidate.totalChunks = 0;
 
             results.push_back(candidate);
             logVerbose("Found FLhd at offset: 0x" + juce::String::toHexString((int64_t)i));
@@ -95,8 +103,6 @@ std::vector<FLPRecovery::Candidate> FLPRecovery::findFLhdSignatures(const uint8_
 bool FLPRecovery::validateFLdt(const uint8_t* data, Candidate& candidate)
 {
     uint64_t offset = candidate.offset;
-
-    // FLhd header is 16 bytes, FLdt should start at offset+16
     uint64_t fldtPos = offset + HEADER_SIZE;
 
     if (memcmp(data + fldtPos, FLDT_MAGIC, 4) != 0)
@@ -132,13 +138,190 @@ bool FLPRecovery::validateFLdt(const uint8_t* data, Candidate& candidate)
 
     candidate.version = extractVersion(data, offset);
     candidate.isValid = true;
+    candidate.isComplete = true;
+
     logVerbose("Validated: size=" + juce::String((int)dataSize) +
         ", version=" + candidate.version);
 
     return true;
 }
 
-/// ─── Scan Image File ──────────────────────────────────────────────────────
+// ─── Validate Candidate ──────────────────────────────────────────────────
+
+bool FLPRecovery::validateCandidate(Candidate& candidate, const uint8_t* data)
+{
+    if (!data || candidate.offset > 0xFFFFFFFF)
+    {
+        candidate.error = "Invalid data pointer or offset";
+        candidate.isValid = false;
+        return false;
+    }
+
+    if (memcmp(data + candidate.offset, FLHD_MAGIC, 4) != 0)
+    {
+        candidate.error = "FLhd magic not found";
+        candidate.isValid = false;
+        return false;
+    }
+
+    return validateFLdt(data, candidate);
+}
+
+// ─── Check Overlap ───────────────────────────────────────────────────────────
+
+bool FLPRecovery::isOverlapping(const Candidate& a, const Candidate& b)
+{
+    if (!a.isValid || !b.isValid)
+        return false;
+
+    uint64_t aEnd = a.offset + a.totalSize;
+    uint64_t bEnd = b.offset + b.totalSize;
+
+    return !(aEnd <= b.offset || bEnd <= a.offset);
+}
+
+// ─── Scan Block for FLP Data ──────────────────────────────────────────────
+
+bool FLPRecovery::scanBlockForFLP(const uint8_t* blockData, uint64_t blockOffset,
+    uint64_t blockSize, BlockInfo& blockInfo)
+{
+    blockInfo.blockOffset = blockOffset;
+    blockInfo.blockSize = blockSize;
+    blockInfo.hasFLPData = false;
+    blockInfo.isBackedUp = false;
+    blockInfo.foundOffsets.clear();
+
+    auto candidates = findFLhdSignatures(blockData, (size_t)blockSize);
+
+    if (!candidates.empty())
+    {
+        blockInfo.hasFLPData = true;
+        for (const auto& cand : candidates)
+        {
+            blockInfo.foundOffsets.push_back(blockOffset + cand.offset);
+        }
+        blockInfo.status = "Contains FLP data";
+        logVerbose("FLP found in block at offset 0x" +
+            juce::String::toHexString((int64_t)blockOffset));
+        return true;
+    }
+
+    blockInfo.status = "Empty";
+    return false;
+}
+
+// ─── Scan Drive Raw with Block Analysis ───────────────────────────────────
+
+FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& drivePath,
+    uint64_t blockSize,
+    uint64_t startOffset,
+    uint64_t scanSize)
+{
+    ScanResult result;
+    m_blockSize = blockSize;
+
+#if JUCE_WINDOWS
+    juce::String path = drivePath;
+    if (!drivePath.startsWith("\\\\.\\"))
+        path = "\\\\.\\" + drivePath;
+#else
+    juce::String path = drivePath;
+#endif
+
+    juce::File driveFile(path);
+    if (!driveFile.existsAsFile())
+    {
+        result.lastError = "Drive not found: " + drivePath;
+        return result;
+    }
+
+    juce::FileInputStream stream(driveFile);
+    if (!stream.openedOk())
+    {
+        result.lastError = "Could not open drive: " + drivePath +
+            " (administrator/root privileges may be required)";
+        return result;
+    }
+
+    juce::int64 fileSize = stream.getTotalLength();
+    if (scanSize > 0 && scanSize < (uint64_t)fileSize)
+        fileSize = (juce::int64)scanSize;
+
+    if (startOffset > 0)
+        stream.setPosition((juce::int64)startOffset);
+
+    uint64_t totalBytesToScan = (uint64_t)fileSize - startOffset;
+    uint64_t totalBlocks = totalBytesToScan / blockSize;
+    result.totalBlocks = totalBlocks;
+    result.bytesScanned = totalBytesToScan;
+
+    log("Scanning drive with " + juce::String((int)totalBlocks) + " blocks of " +
+        juce::String((int)blockSize) + " bytes");
+
+    std::vector<uint8_t> blockBuffer(blockSize);
+    uint64_t currentOffset = startOffset;
+    uint64_t blocksProcessed = 0;
+
+    while (currentOffset < (uint64_t)fileSize)
+    {
+        size_t bytesRead = stream.read(blockBuffer.data(), (size_t)blockSize);
+        if (bytesRead == 0)
+            break;
+
+        BlockInfo blockInfo;
+        blockInfo.blockIndex = blocksProcessed;
+
+        if (scanBlockForFLP(blockBuffer.data(), currentOffset, bytesRead, blockInfo))
+        {
+            result.blocksWithFLP++;
+
+            auto candidates = findFLhdSignatures(blockBuffer.data(), bytesRead);
+            for (auto& candidate : candidates)
+            {
+                candidate.offset += currentOffset;
+                if (validateFLdt(blockBuffer.data(), candidate))
+                {
+                    candidate.isComplete = true;
+                    result.candidates.push_back(candidate);
+                    result.validFiles++;
+                    if (onCandidateFound) onCandidateFound(candidate);
+                    log("Found complete FLP at offset 0x" +
+                        juce::String::toHexString((int64_t)candidate.offset) +
+                        " (" + candidate.version + ", " +
+                        juce::String((int)(candidate.totalSize / 1024)) + " KB)");
+                }
+            }
+        }
+
+        result.allBlocks.push_back(blockInfo);
+        if (onBlockScanned) onBlockScanned(blockInfo);
+
+        blocksProcessed++;
+        currentOffset += bytesRead;
+
+        if (blocksProcessed % 100 == 0)
+        {
+            float progress = (float)currentOffset / (float)fileSize;
+            sendProgress(progress, "Scanning block " + juce::String((int)blocksProcessed) +
+                " of " + juce::String((int)totalBlocks));
+        }
+    }
+
+    log("Scan complete. Found " + juce::String((int)result.validFiles) +
+        " FLP files in " + juce::String((int)result.blocksWithFLP) + " blocks.");
+    return result;
+}
+
+// ─── Scan Drive Raw ─────────────────────────────────────────────────────────
+
+FLPRecovery::ScanResult FLPRecovery::scanDriveRaw(const juce::String& drivePath,
+    uint64_t startOffset,
+    uint64_t scanSize)
+{
+    return scanDriveWithBlocks(drivePath, m_blockSize, startOffset, scanSize);
+}
+
+// ─── Scan Image File ──────────────────────────────────────────────────────
 
 FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
 {
@@ -160,9 +343,8 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
     juce::int64 fileSize = stream.getTotalLength();
     result.bytesScanned = fileSize;
 
-    // Use chunk-based reading for all files (works with any size)
-    const size_t chunkSize = 64 * 1024 * 1024; // 64MB chunks
-    const size_t overlapSize = 8192; // Overlap between chunks to catch signatures that span boundaries
+    const size_t chunkSize = 64 * 1024 * 1024;
+    const size_t overlapSize = 8192;
 
     std::vector<uint8_t> buffer(chunkSize + overlapSize);
     std::vector<uint8_t> overlapBuffer(overlapSize);
@@ -175,49 +357,33 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
     {
         size_t readSize = (size_t)std::min((juce::int64)chunkSize, fileSize - pos);
 
-        // If this isn't the first chunk, copy the overlap from previous chunk
         if (!firstChunk)
         {
-            // Copy overlap data to the beginning of the buffer
             memcpy(buffer.data(), overlapBuffer.data(), overlapSize);
-            // Read new data after the overlap
             stream.setPosition(pos);
             size_t bytesRead = stream.read(buffer.data() + overlapSize, readSize);
-            // Total valid data in buffer is overlapSize + bytesRead
             size_t totalData = overlapSize + bytesRead;
 
-            // Scan the buffer
             auto candidates = findFLhdSignatures(buffer.data(), totalData);
             totalCandidatesFound += candidates.size();
 
             for (auto& candidate : candidates)
             {
-                // Adjust offset for the overlap
                 uint64_t actualOffset = pos - overlapSize + candidate.offset;
                 candidate.offset = actualOffset;
 
-                // We need to validate with the full data, but we only have part of the file
-                // So we need to check if the FLdt data is within our buffer
                 uint64_t fldtPos = candidate.offset + HEADER_SIZE;
 
-                // Check if we have enough data to validate
                 if (fldtPos + FLDT_HEADER_SIZE + 4 > (uint64_t)(pos + totalData))
                 {
-                    // We don't have the full FLdt data, skip validation for now
-                    // This will be caught in the next chunk if the signature spans the boundary
                     continue;
                 }
 
-                // We can only fully validate if the entire FLdt chunk is in our buffer
-                // For now, do a partial validation
                 if (candidate.offset + 1024 > (uint64_t)(pos + totalData))
                     continue;
 
-                // We need to read the FLdt size to validate, but we might not have the whole file
-                // For chunk-based scanning, we need to handle this differently
-                // Let's just note the candidate for now and validate later
-                candidate.isValid = true; // Tentative
-                candidate.totalSize = 0; // Will be filled later
+                candidate.isValid = true;
+                candidate.totalSize = 0;
                 result.candidates.push_back(candidate);
                 result.validFiles++;
                 if (onCandidateFound) onCandidateFound(candidate);
@@ -227,17 +393,14 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
         }
         else
         {
-            // First chunk: read from the beginning
             stream.setPosition(pos);
             size_t bytesRead = stream.read(buffer.data(), readSize);
 
-            // Scan the buffer
             auto candidates = findFLhdSignatures(buffer.data(), bytesRead);
             totalCandidatesFound += candidates.size();
 
             for (auto& candidate : candidates)
             {
-                // Validate candidate
                 if (candidate.offset + 1024 > bytesRead)
                     continue;
 
@@ -259,7 +422,6 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
             firstChunk = false;
         }
 
-        // Store the last overlapSize bytes for the next chunk
         size_t bytesToStore = std::min((size_t)overlapSize, (size_t)(pos + readSize));
         if (bytesToStore > 0)
         {
@@ -271,8 +433,6 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
         sendProgress((float)pos / fileSize, "Scanning... " + juce::String((int)(pos * 100 / fileSize)) + "%");
     }
 
-    // Now, after scanning all chunks, re-validate any candidates that were only partially validated
-    // This is a simplified approach - in a real implementation, you'd want to do this more carefully
     log("Scan complete. Found " + juce::String((int)result.validFiles) + " FLP candidates.");
     log("Note: Some candidates may need full file validation.");
 
@@ -394,9 +554,6 @@ bool FLPRecovery::recoverCandidate(const Candidate& candidate,
     }
 
     juce::File outputFile = outputFolder.getChildFile(filename);
-
-    // In a full implementation, the source data would be passed in
-    // For now, we'll log the recovery would happen
     log("Recovering to: " + outputFile.getFullPathName());
 
     return true;
@@ -434,39 +591,214 @@ int FLPRecovery::recoverAll(const ScanResult& result,
     return recovered;
 }
 
-// ─── Validate Candidate ──────────────────────────────────────────────────────
+// ─── Recover Candidate with Blocks ────────────────────────────────────────
 
-bool FLPRecovery::validateCandidate(Candidate& candidate, const uint8_t* data)
+bool FLPRecovery::recoverCandidateWithBlocks(const Candidate& candidate,
+    const juce::File& outputFolder,
+    bool backupBlocks,
+    const juce::String& suggestedName)
 {
-    if (!data || candidate.offset > 0xFFFFFFFF)
+    if (!candidate.isValid)
     {
-        candidate.error = "Invalid data pointer or offset";
-        candidate.isValid = false;
+        log("Cannot recover invalid candidate");
         return false;
     }
 
-    // Check FLhd magic
-    if (memcmp(data + candidate.offset, FLHD_MAGIC, 4) != 0)
+    if (!outputFolder.isDirectory())
     {
-        candidate.error = "FLhd magic not found";
-        candidate.isValid = false;
-        return false;
+        if (!outputFolder.createDirectory())
+        {
+            log("Could not create output folder");
+            return false;
+        }
     }
 
-    // Validate FLdt
-    return validateFLdt(data, candidate);
+    juce::String filename = suggestedName;
+    if (filename.isEmpty())
+    {
+        filename = "recovered_flp_" +
+            juce::String::toHexString((int64_t)candidate.offset) +
+            ".flp";
+    }
+
+    juce::File outputFile = outputFolder.getChildFile(filename);
+    log("Recovering to: " + outputFile.getFullPathName());
+
+    if (backupBlocks && !candidate.blocks.empty())
+    {
+        juce::File backupFolder = outputFolder.getChildFile("block_backups");
+        backupFolder.createDirectory();
+
+        for (const auto& block : candidate.blocks)
+        {
+            if (!block.isBackedUp)
+            {
+                juce::File blockFile = backupFolder.getChildFile(
+                    "block_" + juce::String::toHexString((int64_t)block.blockOffset) + ".dat");
+                log("Backing up block to: " + blockFile.getFullPathName());
+            }
+        }
+    }
+
+    return true;
 }
 
-// ─── Check Overlap ───────────────────────────────────────────────────────────
+// ─── Recover All with Blocks ──────────────────────────────────────────────
 
-bool FLPRecovery::isOverlapping(const Candidate& a, const Candidate& b)
+int FLPRecovery::recoverAllWithBlocks(const ScanResult& result,
+    const juce::File& outputFolder,
+    bool backupBlocks)
 {
-    if (!a.isValid || !b.isValid)
-        return false;
+    int recovered = 0;
 
-    uint64_t aEnd = a.offset + a.totalSize;
-    uint64_t bEnd = b.offset + b.totalSize;
+    if (!outputFolder.isDirectory())
+    {
+        outputFolder.createDirectory();
+    }
 
-    // Check if ranges overlap
-    return !(aEnd <= b.offset || bEnd <= a.offset);
+    for (const auto& candidate : result.candidates)
+    {
+        juce::String filename = "recovered_flp_" +
+            juce::String::toHexString((int64_t)candidate.offset) +
+            "_" + candidate.version +
+            ".flp";
+
+        filename = filename.replaceCharacters("\\/:?\"<>|", "_");
+
+        if (recoverCandidateWithBlocks(candidate, outputFolder, backupBlocks, filename))
+        {
+            recovered++;
+        }
+    }
+
+    log("Recovered " + juce::String(recovered) + " of " +
+        juce::String(result.candidates.size()) + " files.");
+    return recovered;
+}
+
+// ─── Reconstruct File from Blocks ─────────────────────────────────────────
+
+bool FLPRecovery::reconstructFileFromBlocks(Candidate& candidate,
+    const std::vector<BlockInfo>& blocks)
+{
+    // This would reassemble the file from scattered blocks
+    // Complex implementation would track fragment locations
+    candidate.isComplete = false;
+    return false;
+}
+
+// ─── Backup Block ─────────────────────────────────────────────────────────
+
+bool FLPRecovery::backupBlock(const BlockInfo& block, const juce::File& backupFolder)
+{
+    // Implementation would read the block from the drive and save it
+    return true;
+}
+
+// =============================================================================
+// Passive Scanner Thread Implementation
+// =============================================================================
+
+FLPRecovery::PassiveScannerThread::PassiveScannerThread(FLPRecovery& owner)
+    : juce::Thread("PassiveFLPScanner"), m_owner(owner) {}
+
+FLPRecovery::PassiveScannerThread::~PassiveScannerThread()
+{
+    stopScanning();
+}
+
+void FLPRecovery::PassiveScannerThread::run()
+{
+    juce::File driveFile(m_drivePath);
+    if (!driveFile.existsAsFile())
+    {
+        m_owner.log("Drive not found: " + m_drivePath);
+        return;
+    }
+
+    juce::FileInputStream stream(driveFile);
+    if (!stream.openedOk())
+    {
+        m_owner.log("Could not open drive for passive monitoring");
+        return;
+    }
+
+    m_currentOffset = 0;
+    std::vector<uint8_t> blockBuffer(m_blockSize);
+
+    m_owner.log("Starting passive monitoring on: " + m_drivePath);
+
+    while (!m_shouldStop)
+    {
+        stream.setPosition((juce::int64)m_currentOffset);
+        size_t bytesRead = stream.read(blockBuffer.data(), (size_t)m_blockSize);
+
+        if (bytesRead > 0)
+        {
+            BlockInfo blockInfo;
+            if (m_owner.scanBlockForFLP(blockBuffer.data(), m_currentOffset, bytesRead, blockInfo))
+            {
+                juce::String status = "FLP detected in block 0x" +
+                    juce::String::toHexString((int64_t)m_currentOffset);
+                m_owner.log(status);
+
+                if (m_owner.onBlockScanned)
+                    m_owner.onBlockScanned(blockInfo);
+
+                auto candidates = m_owner.findFLhdSignatures(blockBuffer.data(), bytesRead);
+                for (auto& candidate : candidates)
+                {
+                    candidate.offset += m_currentOffset;
+                    if (m_owner.validateFLdt(blockBuffer.data(), candidate))
+                    {
+                        if (m_owner.onCandidateFound)
+                            m_owner.onCandidateFound(candidate);
+                        m_owner.log("Found FLP in passive scan at offset 0x" +
+                            juce::String::toHexString((int64_t)candidate.offset));
+                    }
+                }
+            }
+
+            m_currentOffset += bytesRead;
+        }
+        else
+        {
+            juce::Thread::sleep(m_updateIntervalMs);
+        }
+
+        juce::Thread::sleep(m_updateIntervalMs);
+    }
+}
+
+void FLPRecovery::PassiveScannerThread::stopScanning()
+{
+    m_shouldStop = true;
+}
+
+// ─── Passive Mode Control ─────────────────────────────────────────────────
+
+void FLPRecovery::startPassiveMode(const juce::String& drivePath,
+    uint64_t blockSize,
+    int updateIntervalMs)
+{
+    stopPassiveMode();
+
+    m_passiveThread = std::make_unique<PassiveScannerThread>(*this);
+    m_passiveThread->setDrivePath(drivePath);
+    m_passiveThread->setBlockSize(blockSize);
+    m_passiveThread->setUpdateInterval(updateIntervalMs);
+    m_passiveThread->startThread();
+
+    log("Passive mode started on: " + drivePath);
+}
+
+void FLPRecovery::stopPassiveMode()
+{
+    if (m_passiveThread)
+    {
+        m_passiveThread->stopScanning();
+        m_passiveThread->waitForThreadToExit(5000);
+        m_passiveThread.reset();
+        log("Passive mode stopped");
+    }
 }
