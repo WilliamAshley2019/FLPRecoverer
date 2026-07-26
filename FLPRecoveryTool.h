@@ -3,6 +3,9 @@
 #include <JuceHeader.h>
 #include "FLPRecoveryScanner.h"
 
+// Forward declaration
+class BlockVisualizerComponent;
+
 // =============================================================================
 // FLPRecoveryTool – Main Application
 // =============================================================================
@@ -27,19 +30,22 @@ public:
 private:
     // ─── UI Components ──────────────────────────────────────────────────
 
-    juce::TextButton scanImageButton{ "Scan Image File..." };
-    juce::TextButton scanDriveButton{ "Scan Physical Drive..." };
-    juce::TextButton scanDirectoryButton{ "Scan Directory..." };
-    juce::TextButton stopButton{ "Stop" };
-    juce::TextButton recoverButton{ "Recover All" };
-    juce::TextButton exploreButton{ "Open Output Folder" };
+    juce::TextButton scanImageButton;
+    juce::TextButton scanDriveButton{ "💾 Scan Physical Drive..." };
+    juce::TextButton scanDirectoryButton{ "📂 Scan Directory..." };
+    juce::TextButton stopButton{ "⏹ Stop" };
+    juce::TextButton selectOutputFolderButton{ "📤 Select Output Folder" };
+    juce::TextButton recoverButton{ "💾 Recover All" };
+    juce::TextButton exploreButton{ "📂 Open Output Folder" };
 
     juce::Label statusLabel;
     juce::Label progressLabel;
-    juce::ProgressBar progressBar{ progressValue };
+    juce::ProgressBar progressBar;
 
     juce::TableListBox resultsTable;
     juce::TextEditor logBox;
+
+    std::unique_ptr<BlockVisualizerComponent> blockVisualizer;
 
     // ─── Data ────────────────────────────────────────────────────────────
 
@@ -75,6 +81,7 @@ private:
     void scanDriveButtonClicked();
     void scanDirectoryButtonClicked();
     void stopButtonClicked();
+    void selectOutputFolderButtonClicked();
     void recoverButtonClicked();
     void exploreButtonClicked();
 
@@ -86,23 +93,6 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLPRecoveryTool)
 };
-
-
-//block visualization
-class BlockVisualizer : public juce::Component
-{
-public:
-    BlockVisualizer();
-    void paint(juce::Graphics& g) override;
-    void updateBlocks(const std::vector<FLPRecovery::BlockInfo>& blocks);
-    void setBlockSize(int size) { m_blockSize = size; }
-
-private:
-    std::vector<FLPRecovery::BlockInfo> m_blocks;
-    int m_blockSize = 10; // pixels per block
-    juce::Colour getBlockColour(const FLPRecovery::BlockInfo& block);
-};
-
 
 // ─── Main Application Class ────────────────────────────────────────────────
 
@@ -134,7 +124,7 @@ private:
         {
             setUsingNativeTitleBar(true);
             setContentOwned(c, true);
-            centreWithSize(900, 700);
+            centreWithSize(1000, 750);
             setResizable(true, true);
             setVisible(true);
         }

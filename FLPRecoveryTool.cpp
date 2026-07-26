@@ -11,11 +11,20 @@ int FLPRecoveryTool::TableModel::getNumRows()
 }
 
 void FLPRecoveryTool::TableModel::paintRowBackground(juce::Graphics& g,
-    int rowNumber, int width, int height, bool rowIsSelected)
+    int rowNumber, int /*width*/, int /*height*/, bool rowIsSelected)
 {
-    auto bg = rowIsSelected ? juce::Colour(0xFF2A2A3A) :
-        (rowNumber % 2 ? juce::Colour(0xFF222222) : juce::Colour(0xFF1A1A1A));
-    g.fillAll(bg);
+    if (rowIsSelected)
+    {
+        g.fillAll(juce::Colour(0xFF2A3A5A));
+    }
+    else if (rowNumber % 2 == 0)
+    {
+        g.fillAll(juce::Colour(0xFF1A1A2E));
+    }
+    else
+    {
+        g.fillAll(juce::Colour(0xFF222244));
+    }
 }
 
 void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
@@ -26,6 +35,7 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
 
     const auto& candidate = m_owner.currentResult.candidates[rowNumber];
     juce::String text;
+    juce::Colour textColour = rowIsSelected ? juce::Colours::white : juce::Colour(0xFFC0C0E0);
 
     switch (columnId)
     {
@@ -36,85 +46,271 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
         text = "0x" + juce::String::toHexString((int64_t)candidate.offset);
         break;
     case 3: // Size
-        text = juce::String((int)(candidate.totalSize / 1024)) + " KB";
+        if (candidate.totalSize > 1024 * 1024)
+            text = juce::String((int)(candidate.totalSize / (1024 * 1024))) + " MB";
+        else if (candidate.totalSize > 1024)
+            text = juce::String((int)(candidate.totalSize / 1024)) + " KB";
+        else
+            text = juce::String((int)candidate.totalSize) + " B";
         break;
     case 4: // Version
         text = candidate.version.isNotEmpty() ? candidate.version : "Unknown";
+        if (candidate.version.isNotEmpty())
+            textColour = juce::Colour(0xFF66DD88);
         break;
     case 5: // Status
-        text = candidate.isValid ? "Valid" : "Invalid";
+        if (candidate.isValid && candidate.isComplete)
+        {
+            text = "✓ Complete";
+            textColour = juce::Colour(0xFF44DD66);
+        }
+        else if (candidate.isValid)
+        {
+            text = "⟳ Partial";
+            textColour = juce::Colour(0xFFDDDD44);
+        }
+        else
+        {
+            text = "✗ Invalid";
+            textColour = juce::Colour(0xFFDD4444);
+        }
         break;
     default:
         break;
     }
 
-    g.setColour(rowIsSelected ? juce::Colours::white : juce::Colours::lightgrey);
-    g.setFont(juce::Font(juce::FontOptions(13.0f)));
-    g.drawText(text, 4, 0, width - 8, height, juce::Justification::centredLeft);
+    g.setColour(textColour);
+    juce::Font font(juce::FontOptions(13.0f));
+    font.setBold(true);
+    g.setFont(font);
+
+    juce::Rectangle<int> textRect(4, 0, width - 8, height);
+    g.drawText(text, textRect, juce::Justification::centredLeft);
 }
 
-void FLPRecoveryTool::TableModel::cellClicked(int, int, const juce::MouseEvent&)
+void FLPRecoveryTool::TableModel::cellClicked(int rowNumber, int /*columnId*/, const juce::MouseEvent& /*event*/)
 {
-    // Could show details of the selected file
+    if (rowNumber >= 0 && rowNumber < (int)m_owner.currentResult.candidates.size())
+    {
+        const auto& candidate = m_owner.currentResult.candidates[rowNumber];
+        m_owner.logMessage("Selected: Offset 0x" +
+            juce::String::toHexString((int64_t)candidate.offset) +
+            " | Size: " + juce::String((int)(candidate.totalSize / 1024)) + " KB" +
+            " | Version: " + candidate.version +
+            " | Status: " + (candidate.isValid ? "Valid" : "Invalid"));
+    }
 }
+
+// =============================================================================
+// Block Visualizer Component
+// =============================================================================
+
+class BlockVisualizerComponent : public juce::Component
+{
+public:
+    BlockVisualizerComponent()
+    {
+        setSize(300, 100);
+    }
+
+    void updateBlocks(const std::vector<FLPRecovery::BlockInfo>& blocks)
+    {
+        m_blocks = blocks;
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().reduced(2);
+        g.fillAll(juce::Colour(0xFF0A0A1A));
+
+        // Draw border
+        g.setColour(juce::Colour(0xFF333355));
+        g.drawRect(bounds, 1);
+
+        if (m_blocks.empty())
+        {
+            g.setColour(juce::Colour(0xFF666688));
+            g.setFont(juce::Font(juce::FontOptions(14.0f)));
+            g.drawText("No blocks scanned yet", bounds, juce::Justification::centred);
+            return;
+        }
+
+        // Calculate block display size
+        int numBlocks = (int)m_blocks.size();
+        int blockSize = juce::jlimit(4, 20, (bounds.getWidth() - 10) / numBlocks);
+        int maxBlocksPerRow = (bounds.getWidth() - 10) / blockSize;
+        int rows = (numBlocks + maxBlocksPerRow - 1) / maxBlocksPerRow;
+        int rowHeight = juce::jlimit(4, 20, (bounds.getHeight() - 10) / rows);
+
+        // Draw block grid
+        int x = bounds.getX() + 5;
+        int y = bounds.getY() + 5;
+        int blocksDrawn = 0;
+
+        for (int row = 0; row < rows && blocksDrawn < numBlocks; ++row)
+        {
+            for (int col = 0; col < maxBlocksPerRow && blocksDrawn < numBlocks; ++col)
+            {
+                const auto& block = m_blocks[blocksDrawn];
+                juce::Colour blockColour = getBlockColour(block);
+
+                g.setColour(blockColour);
+                g.fillRect(x, y, blockSize - 1, rowHeight - 1);
+
+                // Add small highlight for blocks with FLP data
+                if (block.hasFLPData)
+                {
+                    g.setColour(juce::Colours::white.withAlpha(0.3f));
+                    g.drawRect(x, y, blockSize - 1, rowHeight - 1, 1);
+                }
+
+                x += blockSize;
+                blocksDrawn++;
+            }
+            x = bounds.getX() + 5;
+            y += rowHeight;
+        }
+
+        // Draw legend
+        drawLegend(g, bounds);
+    }
+
+private:
+    std::vector<FLPRecovery::BlockInfo> m_blocks;
+
+    juce::Colour getBlockColour(const FLPRecovery::BlockInfo& block)
+    {
+        if (block.isBackedUp)
+            return juce::Colour(0xFF44AADD); // Blue - backed up
+        if (block.hasFLPData)
+            return juce::Colour(0xFF44DD66); // Green - contains FLP data
+        return juce::Colour(0xFF333355);     // Dark - empty
+    }
+
+    void drawLegend(juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        auto legendBounds = bounds.removeFromBottom(20);
+        int spacing = 60;
+        int x = (bounds.getWidth() - spacing * 3) / 2 + bounds.getX();
+
+        // Green - FLP data
+        g.setColour(juce::Colour(0xFF44DD66));
+        g.fillRect(x, legendBounds.getY() + 4, 12, 12);
+        g.setColour(juce::Colour(0xFF8888AA));
+        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.drawText("FLP", x + 16, legendBounds.getY(), 40, 20, juce::Justification::centredLeft);
+
+        x += spacing;
+
+        // Blue - Backed up
+        g.setColour(juce::Colour(0xFF44AADD));
+        g.fillRect(x, legendBounds.getY() + 4, 12, 12);
+        g.setColour(juce::Colour(0xFF8888AA));
+        g.drawText("Backup", x + 16, legendBounds.getY(), 50, 20, juce::Justification::centredLeft);
+
+        x += spacing + 20;
+
+        // Dark - Empty
+        g.setColour(juce::Colour(0xFF333355));
+        g.fillRect(x, legendBounds.getY() + 4, 12, 12);
+        g.setColour(juce::Colour(0xFF8888AA));
+        g.drawText("Empty", x + 16, legendBounds.getY(), 50, 20, juce::Justification::centredLeft);
+    }
+};
 
 // =============================================================================
 // Main UI Implementation
 // =============================================================================
 
 FLPRecoveryTool::FLPRecoveryTool()
+    : progressBar(progressValue)
 {
-    setSize(900, 700);
+    setSize(1000, 750);
+    setOpaque(true);
 
-    // ─── Setup UI ────────────────────────────────────────────────────────
+    // ─── Setup UI with modern dark theme ──────────────────────────────────────
 
+    // Configure buttons with better styling
+    auto setupButton = [](juce::TextButton& button, const juce::String& text, juce::Colour colour)
+        {
+            button.setButtonText(text);
+            button.setColour(juce::TextButton::buttonColourId, colour);
+            button.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+            button.setColour(juce::TextButton::buttonOnColourId, colour.brighter(0.3f));
+            button.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+           
+        };
+
+    setupButton(scanImageButton, "📁 Scan Image File...", juce::Colour(0xFF2A4A6A));
+    setupButton(scanDriveButton, "💾 Scan Physical Drive...", juce::Colour(0xFF6A2A4A));
+    setupButton(scanDirectoryButton, "📂 Scan Directory...", juce::Colour(0xFF2A6A4A));
+    setupButton(stopButton, "⏹ Stop", juce::Colour(0xFF8A2A2A));
+    setupButton(selectOutputFolderButton, "📤 Select Output Folder", juce::Colour(0xFF4A4A7A));
+    setupButton(recoverButton, "💾 Recover All", juce::Colour(0xFF2A8A5A));
+    setupButton(exploreButton, "📂 Open Output Folder", juce::Colour(0xFF4A6A4A));
+
+    stopButton.setEnabled(false);
+
+    // Add components
     addAndMakeVisible(scanImageButton);
     addAndMakeVisible(scanDriveButton);
     addAndMakeVisible(scanDirectoryButton);
     addAndMakeVisible(stopButton);
+    addAndMakeVisible(selectOutputFolderButton);
     addAndMakeVisible(recoverButton);
     addAndMakeVisible(exploreButton);
 
-    scanImageButton.onClick = [this] { scanImageButtonClicked(); };
-    scanDriveButton.onClick = [this] { scanDriveButtonClicked(); };
-    scanDirectoryButton.onClick = [this] { scanDirectoryButtonClicked(); };
-    stopButton.onClick = [this] { stopButtonClicked(); };
-    recoverButton.onClick = [this] { recoverButtonClicked(); };
-    exploreButton.onClick = [this] { exploreButtonClicked(); };
+    // ─── Status and Progress ─────────────────────────────────────────────────
 
-    stopButton.setEnabled(false);
-
-    statusLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFAACCDD));
+    statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
     statusLabel.setText("Ready", juce::dontSendNotification);
     addAndMakeVisible(statusLabel);
 
-    progressLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    progressLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFAACCDD));
+    progressLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
     progressLabel.setText("0%", juce::dontSendNotification);
     addAndMakeVisible(progressLabel);
 
+    progressBar.setColour(juce::ProgressBar::backgroundColourId, juce::Colour(0xFF1A1A2A));
+    progressBar.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xFF44CC88));
     addAndMakeVisible(progressBar);
 
-    // ─── Results Table ──────────────────────────────────────────────────
+    // ─── Results Table ──────────────────────────────────────────────────────
 
     tableModel = std::make_unique<TableModel>(*this);
     resultsTable.setModel(tableModel.get());
+    resultsTable.setColour(juce::TableListBox::backgroundColourId, juce::Colour(0xFF0A0A1A));
+    resultsTable.setColour(juce::TableListBox::textColourId, juce::Colour(0xFFC0C0E0));
+    resultsTable.setColour(juce::TableListBox::outlineColourId, juce::Colour(0xFF333355));
+    resultsTable.getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, juce::Colour(0xFF222244));
+    resultsTable.getHeader().setColour(juce::TableHeaderComponent::textColourId, juce::Colour(0xFFAACCDD));
+    resultsTable.getHeader().setColour(juce::TableHeaderComponent::outlineColourId, juce::Colour(0xFF333355));
+
     resultsTable.getHeader().addColumn("#", 1, 40);
-    resultsTable.getHeader().addColumn("Offset", 2, 120);
+    resultsTable.getHeader().addColumn("Offset", 2, 130);
     resultsTable.getHeader().addColumn("Size", 3, 100);
     resultsTable.getHeader().addColumn("Version", 4, 120);
-    resultsTable.getHeader().addColumn("Status", 5, 80);
+    resultsTable.getHeader().addColumn("Status", 5, 100);
     addAndMakeVisible(resultsTable);
 
-    // ─── Log Box ────────────────────────────────────────────────────────
+    // ─── Block Visualizer ────────────────────────────────────────────────────
+
+    blockVisualizer = std::make_unique<BlockVisualizerComponent>();
+    addAndMakeVisible(blockVisualizer.get());
+
+    // ─── Log Box ────────────────────────────────────────────────────────────
 
     logBox.setMultiLine(true);
     logBox.setReadOnly(true);
-    logBox.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF111111));
-    logBox.setColour(juce::TextEditor::textColourId, juce::Colours::lightgrey);
+    logBox.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF0A0A18));
+    logBox.setColour(juce::TextEditor::textColourId, juce::Colour(0xFF88AACC));
+    logBox.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xFF222244));
     logBox.setFont(juce::Font(juce::FontOptions(12.0f)));
     addAndMakeVisible(logBox);
 
-    // ─── Scanner Callbacks ──────────────────────────────────────────────
+    // ─── Scanner Callbacks ──────────────────────────────────────────────────
 
     scanner.onProgressCallback = [this](float progress, const juce::String& status)
         {
@@ -132,9 +328,24 @@ FLPRecoveryTool::FLPRecoveryTool()
                 {
                     currentResult.candidates.push_back(candidate);
                     resultsTable.updateContent();
-                    logMessage("Found FLP at offset 0x" +
+                    logMessage("🔍 Found FLP at offset 0x" +
                         juce::String::toHexString((int64_t)candidate.offset) +
                         " (" + candidate.version + ")");
+
+                    // Update block visualizer if we have block info
+                    if (!currentResult.allBlocks.empty())
+                    {
+                        blockVisualizer->updateBlocks(currentResult.allBlocks);
+                    }
+                });
+        };
+
+    scanner.onBlockScanned = [this](const FLPRecovery::BlockInfo& block)
+        {
+            juce::MessageManager::callAsync([this, block]
+                {
+                    currentResult.allBlocks.push_back(block);
+                    blockVisualizer->updateBlocks(currentResult.allBlocks);
                 });
         };
 
@@ -146,7 +357,7 @@ FLPRecoveryTool::FLPRecoveryTool()
                 });
         };
 
-    // ─── Timer ──────────────────────────────────────────────────────────
+    // ─── Timer ──────────────────────────────────────────────────────────────
 
     startTimerHz(30);
 }
@@ -155,45 +366,67 @@ FLPRecoveryTool::~FLPRecoveryTool() {}
 
 void FLPRecoveryTool::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xFF181818));
+    // Modern dark gradient background
+    juce::ColourGradient gradient(
+        juce::Colour(0xFF0A0A1A), 0, 0,
+        juce::Colour(0xFF1A1A3A), 0, (float)getHeight(),
+        false
+    );
+    g.setGradientFill(gradient);
+    g.fillAll();
 }
 
 void FLPRecoveryTool::resized()
 {
-    auto bounds = getLocalBounds().reduced(10);
+    auto bounds = getLocalBounds().reduced(12);
 
-    // Top button row
-    auto topRow = bounds.removeFromTop(35);
-    scanImageButton.setBounds(topRow.removeFromLeft(140));
-    topRow.removeFromLeft(8);
-    scanDriveButton.setBounds(topRow.removeFromLeft(140));
-    topRow.removeFromLeft(8);
-    scanDirectoryButton.setBounds(topRow.removeFromLeft(140));
-    topRow.removeFromLeft(20);
+    // ─── Top Button Row ─────────────────────────────────────────────────────
+
+    auto topRow = bounds.removeFromTop(40);
+    int buttonWidth = 145;
+    int gap = 6;
+
+    scanImageButton.setBounds(topRow.removeFromLeft(buttonWidth));
+    topRow.removeFromLeft(gap);
+    scanDriveButton.setBounds(topRow.removeFromLeft(buttonWidth));
+    topRow.removeFromLeft(gap);
+    scanDirectoryButton.setBounds(topRow.removeFromLeft(buttonWidth));
+    topRow.removeFromLeft(gap * 2);
     stopButton.setBounds(topRow.removeFromLeft(80));
-    topRow.removeFromLeft(20);
+    topRow.removeFromLeft(gap * 2);
+    selectOutputFolderButton.setBounds(topRow.removeFromLeft(buttonWidth + 20));
+    topRow.removeFromLeft(gap);
     recoverButton.setBounds(topRow.removeFromLeft(120));
-    topRow.removeFromLeft(8);
-    exploreButton.setBounds(topRow.removeFromLeft(130));
+    topRow.removeFromLeft(gap);
+    exploreButton.setBounds(topRow.removeFromLeft(buttonWidth));
 
-    bounds.removeFromTop(8);
+    bounds.removeFromTop(10);
 
-    // Status and progress
-    auto statusRow = bounds.removeFromTop(22);
-    statusLabel.setBounds(statusRow.removeFromLeft(statusRow.getWidth() - 120));
-    progressLabel.setBounds(statusRow.removeFromRight(60));
-    bounds.removeFromTop(2);
+    // ─── Status and Progress ────────────────────────────────────────────────
 
-    auto progressRow = bounds.removeFromTop(20);
+    auto statusRow = bounds.removeFromTop(24);
+    statusLabel.setBounds(statusRow.removeFromLeft(statusRow.getWidth() - 100));
+    progressLabel.setBounds(statusRow.removeFromRight(70));
+    bounds.removeFromTop(4);
+
+    auto progressRow = bounds.removeFromTop(22);
     progressBar.setBounds(progressRow);
 
     bounds.removeFromTop(8);
 
-    // Split: table (60%) + log (40%)
-    auto tableArea = bounds.removeFromTop((int)(bounds.getHeight() * 0.6f));
+    // ─── Split Layout ──────────────────────────────────────────────────────
+
+    // Table: 45%, Block Visualizer: 20%, Log: 35%
+    auto tableArea = bounds.removeFromTop((int)(bounds.getHeight() * 0.45f));
     resultsTable.setBounds(tableArea);
 
     bounds.removeFromTop(4);
+
+    auto visualizerArea = bounds.removeFromTop((int)(bounds.getHeight() * 0.28f));
+    blockVisualizer->setBounds(visualizerArea);
+
+    bounds.removeFromTop(4);
+
     logBox.setBounds(bounds);
 }
 
@@ -206,6 +439,8 @@ void FLPRecoveryTool::timerCallback()
         scanImageButton.setEnabled(false);
         scanDriveButton.setEnabled(false);
         scanDirectoryButton.setEnabled(false);
+        selectOutputFolderButton.setEnabled(false);
+        recoverButton.setEnabled(false);
     }
     else
     {
@@ -213,6 +448,8 @@ void FLPRecoveryTool::timerCallback()
         scanImageButton.setEnabled(true);
         scanDriveButton.setEnabled(true);
         scanDirectoryButton.setEnabled(true);
+        selectOutputFolderButton.setEnabled(true);
+        recoverButton.setEnabled(!currentResult.candidates.empty());
     }
 }
 
@@ -231,8 +468,9 @@ void FLPRecoveryTool::scanImageButtonClicked()
             {
                 currentResult = FLPRecovery::ScanResult();
                 resultsTable.updateContent();
+                blockVisualizer->updateBlocks(currentResult.allBlocks);
                 logBox.clear();
-                logMessage("Scanning: " + file.getFileName());
+                logMessage("🔍 Scanning: " + file.getFileName());
                 scanner.startScanImage(file);
             }
         });
@@ -243,11 +481,12 @@ void FLPRecoveryTool::scanDriveButtonClicked()
 #if JUCE_WINDOWS
     auto* alert = new juce::AlertWindow(
         "Scan Physical Drive",
-        "Enter the drive path (e.g., \\\\.\\PhysicalDrive0 or C:):\n\n"
-        "Common drive paths:\n"
+        "Enter the drive path:\n\n"
+        "Examples:\n"
         "  \\\\.\\PhysicalDrive0  - First physical disk\n"
         "  \\\\.\\PhysicalDrive1  - Second physical disk\n"
-        "  C:                   - C: drive",
+        "  C:                   - C: drive\n\n"
+        "⚠️  Requires Administrator privileges",
         juce::AlertWindow::InfoIcon
     );
 
@@ -266,9 +505,10 @@ void FLPRecoveryTool::scanDriveButtonClicked()
                     {
                         currentResult = FLPRecovery::ScanResult();
                         resultsTable.updateContent();
+                        blockVisualizer->updateBlocks(currentResult.allBlocks);
                         logBox.clear();
-                        logMessage("Scanning drive: " + drivePath);
-                        logMessage("WARNING: Scanning physical drives requires administrator privileges.");
+                        logMessage("💾 Scanning drive: " + drivePath);
+                        logMessage("⚠️  Scanning physical drives requires administrator privileges.");
                         scanner.startScanDrive(drivePath);
                     }
                     else
@@ -306,9 +546,10 @@ void FLPRecoveryTool::scanDriveButtonClicked()
                     {
                         currentResult = FLPRecovery::ScanResult();
                         resultsTable.updateContent();
+                        blockVisualizer->updateBlocks(currentResult.allBlocks);
                         logBox.clear();
-                        logMessage("Scanning drive: " + drivePath);
-                        logMessage("WARNING: Scanning physical drives requires root privileges.");
+                        logMessage("💾 Scanning drive: " + drivePath);
+                        logMessage("⚠️  Scanning physical drives requires root privileges.");
                         scanner.startScanDrive(drivePath);
                     }
                     else
@@ -336,8 +577,9 @@ void FLPRecoveryTool::scanDirectoryButtonClicked()
             {
                 currentResult = FLPRecovery::ScanResult();
                 resultsTable.updateContent();
+                blockVisualizer->updateBlocks(currentResult.allBlocks);
                 logBox.clear();
-                logMessage("Scanning directory: " + dir.getFullPathName());
+                logMessage("📂 Scanning directory: " + dir.getFullPathName());
                 scanner.startScanDirectory(dir);
             }
         });
@@ -346,8 +588,29 @@ void FLPRecoveryTool::scanDirectoryButtonClicked()
 void FLPRecoveryTool::stopButtonClicked()
 {
     scanner.stopScanning();
-    logMessage("Stopping scan...");
+    logMessage("⏹ Stopping scan...");
     statusLabel.setText("Stopped", juce::dontSendNotification);
+}
+
+void FLPRecoveryTool::selectOutputFolderButtonClicked()
+{
+    juce::FileChooser chooser("Select Output Folder for Recovered Files",
+        outputFolder.isDirectory() ? outputFolder : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+        "*");
+    chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [this](const juce::FileChooser& fc)
+        {
+            auto dir = fc.getResult();
+            if (dir.isDirectory())
+            {
+                outputFolder = dir;
+                logMessage("📤 Output folder set to: " + outputFolder.getFullPathName());
+            }
+            else
+            {
+                logMessage("No output folder selected.");
+            }
+        });
 }
 
 void FLPRecoveryTool::recoverButtonClicked()
@@ -358,20 +621,15 @@ void FLPRecoveryTool::recoverButtonClicked()
         return;
     }
 
-    juce::FileChooser chooser("Select Output Folder",
-        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
-        "*");
-    chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-        [this](const juce::FileChooser& fc)
-        {
-            auto dir = fc.getResult();
-            if (dir.isDirectory())
-            {
-                outputFolder = dir;
-                int count = scanner.recoverAll(currentResult, outputFolder);
-                logMessage("Recovered " + juce::String(count) + " files to " + outputFolder.getFullPathName());
-            }
-        });
+    if (!outputFolder.isDirectory())
+    {
+        logMessage("⚠️  Please select an output folder first using 'Select Output Folder'.");
+        return;
+    }
+
+    logMessage("💾 Recovering " + juce::String((int)currentResult.candidates.size()) + " files to: " + outputFolder.getFullPathName());
+    int count = scanner.recoverAllWithBlocks(currentResult, outputFolder, true);
+    logMessage("✅ Recovered " + juce::String(count) + " files.");
 }
 
 void FLPRecoveryTool::exploreButtonClicked()
@@ -382,7 +640,7 @@ void FLPRecoveryTool::exploreButtonClicked()
     }
     else
     {
-        logMessage("No output folder selected yet.");
+        logMessage("📂 No output folder selected. Click 'Select Output Folder' first.");
     }
 }
 
@@ -414,8 +672,9 @@ void FLPRecoveryTool::filesDropped(const juce::StringArray& files, int, int)
         {
             currentResult = FLPRecovery::ScanResult();
             resultsTable.updateContent();
+            blockVisualizer->updateBlocks(currentResult.allBlocks);
             logBox.clear();
-            logMessage("Scanning dropped: " + file.getFileName());
+            logMessage("📁 Scanning dropped: " + file.getFileName());
             scanner.startScanImage(file);
         }
     }

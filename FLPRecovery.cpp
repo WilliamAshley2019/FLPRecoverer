@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <iomanip>
 
+#ifdef JUCE_WINDOWS
+#include <windows.h>
+#endif
+
 // =============================================================================
 // FLPRecovery Implementation - Enhanced
 // =============================================================================
@@ -211,6 +215,7 @@ bool FLPRecovery::scanBlockForFLP(const uint8_t* blockData, uint64_t blockOffset
 }
 
 // ─── Scan Drive Raw with Block Analysis ───────────────────────────────────
+// ─── Scan Drive Raw with Block Analysis ───────────────────────────────────
 
 FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& drivePath,
     uint64_t blockSize,
@@ -221,14 +226,117 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
     m_blockSize = blockSize;
 
 #if JUCE_WINDOWS
+    // Windows needs special handling for physical drives
     juce::String path = drivePath;
     if (!drivePath.startsWith("\\\\.\\"))
         path = "\\\\.\\" + drivePath;
-#else
-    juce::String path = drivePath;
-#endif
 
-    juce::File driveFile(path);
+    // On Windows, we need to use CreateFile with special flags for physical drives
+    HANDLE hDrive = CreateFileA(
+        path.toRawUTF8(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
+        NULL
+    );
+
+    if (hDrive == INVALID_HANDLE_VALUE)
+    {
+        DWORD error = GetLastError();
+        result.lastError = "Failed to open drive: " + drivePath +
+            " (Error: " + juce::String((int)error) +
+            "). Run as Administrator and ensure the drive exists.";
+        log(result.lastError);
+        return result;
+    }
+
+    // Get drive size
+    LARGE_INTEGER diskSize;
+    if (!GetFileSizeEx(hDrive, &diskSize))
+    {
+        CloseHandle(hDrive);
+        result.lastError = "Failed to get drive size";
+        return result;
+    }
+
+    uint64_t fileSize = diskSize.QuadPart;
+    if (scanSize > 0 && scanSize < fileSize)
+        fileSize = scanSize;
+
+    uint64_t totalBytesToScan = fileSize - startOffset;
+    uint64_t totalBlocks = totalBytesToScan / blockSize;
+    result.totalBlocks = totalBlocks;
+    result.bytesScanned = totalBytesToScan;
+
+    log("Scanning drive with " + juce::String((int)totalBlocks) + " blocks of " +
+        juce::String((int)blockSize) + " bytes");
+
+    // Set position
+    LARGE_INTEGER pos;
+    pos.QuadPart = startOffset;
+    SetFilePointerEx(hDrive, pos, NULL, FILE_BEGIN);
+
+    std::vector<uint8_t> blockBuffer(blockSize);
+    uint64_t currentOffset = startOffset;
+    uint64_t blocksProcessed = 0;
+    DWORD bytesRead = 0;
+
+    while (currentOffset < fileSize && blocksProcessed < totalBlocks)
+    {
+        if (!ReadFile(hDrive, blockBuffer.data(), (DWORD)blockSize, &bytesRead, NULL))
+        {
+            break;
+        }
+
+        if (bytesRead == 0)
+            break;
+
+        BlockInfo blockInfo;
+        blockInfo.blockIndex = blocksProcessed;
+
+        if (scanBlockForFLP(blockBuffer.data(), currentOffset, bytesRead, blockInfo))
+        {
+            result.blocksWithFLP++;
+
+            auto candidates = findFLhdSignatures(blockBuffer.data(), bytesRead);
+            for (auto& candidate : candidates)
+            {
+                candidate.offset += currentOffset;
+                if (validateFLdt(blockBuffer.data(), candidate))
+                {
+                    candidate.isComplete = true;
+                    result.candidates.push_back(candidate);
+                    result.validFiles++;
+                    if (onCandidateFound) onCandidateFound(candidate);
+                    log("Found complete FLP at offset 0x" +
+                        juce::String::toHexString((int64_t)candidate.offset) +
+                        " (" + candidate.version + ", " +
+                        juce::String((int)(candidate.totalSize / 1024)) + " KB)");
+                }
+            }
+        }
+
+        result.allBlocks.push_back(blockInfo);
+        if (onBlockScanned) onBlockScanned(blockInfo);
+
+        blocksProcessed++;
+        currentOffset += bytesRead;
+
+        if (blocksProcessed % 100 == 0)
+        {
+            float progress = (float)currentOffset / (float)fileSize;
+            sendProgress(progress, "Scanning block " + juce::String((int)blocksProcessed) +
+                " of " + juce::String((int)totalBlocks));
+        }
+    }
+
+    CloseHandle(hDrive);
+
+#else
+    // Linux / macOS - use file access
+    juce::File driveFile(drivePath);
     if (!driveFile.existsAsFile())
     {
         result.lastError = "Drive not found: " + drivePath;
@@ -239,7 +347,7 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
     if (!stream.openedOk())
     {
         result.lastError = "Could not open drive: " + drivePath +
-            " (administrator/root privileges may be required)";
+            " (root privileges may be required)";
         return result;
     }
 
@@ -306,20 +414,14 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
                 " of " + juce::String((int)totalBlocks));
         }
     }
+#endif
 
     log("Scan complete. Found " + juce::String((int)result.validFiles) +
         " FLP files in " + juce::String((int)result.blocksWithFLP) + " blocks.");
     return result;
 }
 
-// ─── Scan Drive Raw ─────────────────────────────────────────────────────────
-
-FLPRecovery::ScanResult FLPRecovery::scanDriveRaw(const juce::String& drivePath,
-    uint64_t startOffset,
-    uint64_t scanSize)
-{
-    return scanDriveWithBlocks(drivePath, m_blockSize, startOffset, scanSize);
-}
+ 
 
 // ─── Scan Image File ──────────────────────────────────────────────────────
 
@@ -355,7 +457,8 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
 
     while (pos < fileSize)
     {
-        size_t readSize = (size_t)std::min((juce::int64)chunkSize, fileSize - pos);
+       size_t readSize = (size_t)juce::jmin((juce::int64)chunkSize, fileSize - pos);
+
 
         if (!firstChunk)
         {
@@ -422,7 +525,8 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
             firstChunk = false;
         }
 
-        size_t bytesToStore = std::min((size_t)overlapSize, (size_t)(pos + readSize));
+        size_t bytesToStore = (size_t)juce::jmin((juce::int64)overlapSize, pos + (juce::int64)readSize);
+
         if (bytesToStore > 0)
         {
             stream.setPosition(pos + readSize - bytesToStore);
