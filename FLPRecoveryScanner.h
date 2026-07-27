@@ -1,15 +1,11 @@
 #pragma once
-
 #include <JuceHeader.h>
 #include "FLPRecovery.h"
-#include <atomic> 
+#include <atomic>
 
 // =============================================================================
 // FLPRecoveryScanner – Background scanning with threading
 // =============================================================================
-// Extends FLPRecovery with background thread support for large disk scans.
-// =============================================================================
-
 class FLPRecoveryScanner : public juce::Thread,
     public FLPRecovery
 {
@@ -23,11 +19,13 @@ public:
                 if (this->onProgressCallback)
                     this->onProgressCallback(progress, status);
             };
+
         onCandidateFound = [this](const Candidate& candidate)
             {
                 if (this->onCandidateFoundCallback)
                     this->onCandidateFoundCallback(candidate);
             };
+
         onLog = [this](const juce::String& msg)
             {
                 if (this->onLogCallback)
@@ -35,14 +33,8 @@ public:
             };
     }
 
-    ~FLPRecoveryScanner() override
-    {
-        m_stopScanning = true;
-        waitForThreadToExit(10000);
-    }
-
+  
     // ─── Start Scanning ──────────────────────────────────────────────────
-
     void startScanImage(const juce::File& imageFile)
     {
         m_scanMode = ScanMode::Image;
@@ -79,11 +71,9 @@ public:
     }
 
     // ─── Results ─────────────────────────────────────────────────────────
-
     FLPRecovery::ScanResult getResult() const { return m_result; }
 
     // ─── Callbacks ──────────────────────────────────────────────────────
-
     std::function<void(float, const juce::String&)> onProgressCallback;
     std::function<void(const FLPRecovery::Candidate&)> onCandidateFoundCallback;
     std::function<void(const juce::String&)> onLogCallback;
@@ -119,6 +109,5 @@ private:
     juce::String m_drivePath;
     juce::File m_directory;
     FLPRecovery::ScanResult m_result;
-
     std::atomic<bool> m_stopScanning{ false };
 };

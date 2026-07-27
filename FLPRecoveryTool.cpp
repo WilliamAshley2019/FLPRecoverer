@@ -4,7 +4,6 @@
 // =============================================================================
 // Table Model Implementation
 // =============================================================================
-
 int FLPRecoveryTool::TableModel::getNumRows()
 {
     return (int)m_owner.currentResult.candidates.size();
@@ -61,17 +60,17 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
     case 5: // Status
         if (candidate.isValid && candidate.isComplete)
         {
-            text = "✓ Complete";
+            text = "Complete";
             textColour = juce::Colour(0xFF44DD66);
         }
         else if (candidate.isValid)
         {
-            text = "⟳ Partial";
+            text = "Partial";
             textColour = juce::Colour(0xFFDDDD44);
         }
         else
         {
-            text = "✗ Invalid";
+            text = "Invalid";
             textColour = juce::Colour(0xFFDD4444);
         }
         break;
@@ -80,8 +79,9 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
     }
 
     g.setColour(textColour);
-    juce::Font font(juce::FontOptions(13.0f));
-    font.setBold(true);
+
+    // ✅ JUCE 8.0.12: FontOptions with style as string
+    juce::Font font(juce::FontOptions(13.0f).withStyle("Bold"));
     g.setFont(font);
 
     juce::Rectangle<int> textRect(4, 0, width - 8, height);
@@ -104,7 +104,6 @@ void FLPRecoveryTool::TableModel::cellClicked(int rowNumber, int /*columnId*/, c
 // =============================================================================
 // Block Visualizer Component
 // =============================================================================
-
 class BlockVisualizerComponent : public juce::Component
 {
 public:
@@ -123,8 +122,6 @@ public:
     {
         auto bounds = getLocalBounds().reduced(2);
         g.fillAll(juce::Colour(0xFF0A0A1A));
-
-        // Draw border
         g.setColour(juce::Colour(0xFF333355));
         g.drawRect(bounds, 1);
 
@@ -136,14 +133,12 @@ public:
             return;
         }
 
-        // Calculate block display size
         int numBlocks = (int)m_blocks.size();
         int blockSize = juce::jlimit(4, 20, (bounds.getWidth() - 10) / numBlocks);
         int maxBlocksPerRow = (bounds.getWidth() - 10) / blockSize;
         int rows = (numBlocks + maxBlocksPerRow - 1) / maxBlocksPerRow;
         int rowHeight = juce::jlimit(4, 20, (bounds.getHeight() - 10) / rows);
 
-        // Draw block grid
         int x = bounds.getX() + 5;
         int y = bounds.getY() + 5;
         int blocksDrawn = 0;
@@ -154,11 +149,9 @@ public:
             {
                 const auto& block = m_blocks[blocksDrawn];
                 juce::Colour blockColour = getBlockColour(block);
-
                 g.setColour(blockColour);
                 g.fillRect(x, y, blockSize - 1, rowHeight - 1);
 
-                // Add small highlight for blocks with FLP data
                 if (block.hasFLPData)
                 {
                     g.setColour(juce::Colours::white.withAlpha(0.3f));
@@ -171,8 +164,6 @@ public:
             x = bounds.getX() + 5;
             y += rowHeight;
         }
-
-        // Draw legend
         drawLegend(g, bounds);
     }
 
@@ -182,10 +173,10 @@ private:
     juce::Colour getBlockColour(const FLPRecovery::BlockInfo& block)
     {
         if (block.isBackedUp)
-            return juce::Colour(0xFF44AADD); // Blue - backed up
+            return juce::Colour(0xFF44AADD);
         if (block.hasFLPData)
-            return juce::Colour(0xFF44DD66); // Green - contains FLP data
-        return juce::Colour(0xFF333355);     // Dark - empty
+            return juce::Colour(0xFF44DD66);
+        return juce::Colour(0xFF333355);
     }
 
     void drawLegend(juce::Graphics& g, juce::Rectangle<int> bounds)
@@ -194,24 +185,19 @@ private:
         int spacing = 60;
         int x = (bounds.getWidth() - spacing * 3) / 2 + bounds.getX();
 
-        // Green - FLP data
         g.setColour(juce::Colour(0xFF44DD66));
         g.fillRect(x, legendBounds.getY() + 4, 12, 12);
         g.setColour(juce::Colour(0xFF8888AA));
         g.setFont(juce::Font(juce::FontOptions(10.0f)));
         g.drawText("FLP", x + 16, legendBounds.getY(), 40, 20, juce::Justification::centredLeft);
-
         x += spacing;
 
-        // Blue - Backed up
         g.setColour(juce::Colour(0xFF44AADD));
         g.fillRect(x, legendBounds.getY() + 4, 12, 12);
         g.setColour(juce::Colour(0xFF8888AA));
         g.drawText("Backup", x + 16, legendBounds.getY(), 50, 20, juce::Justification::centredLeft);
-
         x += spacing + 20;
 
-        // Dark - Empty
         g.setColour(juce::Colour(0xFF333355));
         g.fillRect(x, legendBounds.getY() + 4, 12, 12);
         g.setColour(juce::Colour(0xFF8888AA));
@@ -222,16 +208,12 @@ private:
 // =============================================================================
 // Main UI Implementation
 // =============================================================================
-
 FLPRecoveryTool::FLPRecoveryTool()
     : progressBar(progressValue)
 {
     setSize(1000, 750);
     setOpaque(true);
 
-    // ─── Setup UI with modern dark theme ──────────────────────────────────────
-
-    // Configure buttons with better styling
     auto setupButton = [](juce::TextButton& button, const juce::String& text, juce::Colour colour)
         {
             button.setButtonText(text);
@@ -239,20 +221,26 @@ FLPRecoveryTool::FLPRecoveryTool()
             button.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
             button.setColour(juce::TextButton::buttonOnColourId, colour.brighter(0.3f));
             button.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
-           
         };
 
-    setupButton(scanImageButton, "📁 Scan Image File...", juce::Colour(0xFF2A4A6A));
-    setupButton(scanDriveButton, "💾 Scan Physical Drive...", juce::Colour(0xFF6A2A4A));
-    setupButton(scanDirectoryButton, "📂 Scan Directory...", juce::Colour(0xFF2A6A4A));
-    setupButton(stopButton, "⏹ Stop", juce::Colour(0xFF8A2A2A));
-    setupButton(selectOutputFolderButton, "📤 Select Output Folder", juce::Colour(0xFF4A4A7A));
-    setupButton(recoverButton, "💾 Recover All", juce::Colour(0xFF2A8A5A));
-    setupButton(exploreButton, "📂 Open Output Folder", juce::Colour(0xFF4A6A4A));
+    setupButton(scanImageButton, "Scan Image File...", juce::Colour(0xFF2A4A6A));
+    setupButton(scanDriveButton, "Scan Physical Drive...", juce::Colour(0xFF6A2A4A));
+    setupButton(scanDirectoryButton, "Scan Directory...", juce::Colour(0xFF2A6A4A));
+    setupButton(stopButton, "Stop", juce::Colour(0xFF8A2A2A));
+    setupButton(selectOutputFolderButton, "Select Output Folder", juce::Colour(0xFF4A4A7A));
+    setupButton(recoverButton, "Recover All", juce::Colour(0xFF2A8A5A));
+    setupButton(exploreButton, "Open Output Folder", juce::Colour(0xFF4A6A4A));
+
+    scanImageButton.onClick = [this] { scanImageButtonClicked(); };
+    scanDriveButton.onClick = [this] { scanDriveButtonClicked(); };
+    scanDirectoryButton.onClick = [this] { scanDirectoryButtonClicked(); };
+    stopButton.onClick = [this] { stopButtonClicked(); };
+    selectOutputFolderButton.onClick = [this] { selectOutputFolderButtonClicked(); };
+    recoverButton.onClick = [this] { recoverButtonClicked(); };
+    exploreButton.onClick = [this] { exploreButtonClicked(); };
 
     stopButton.setEnabled(false);
 
-    // Add components
     addAndMakeVisible(scanImageButton);
     addAndMakeVisible(scanDriveButton);
     addAndMakeVisible(scanDirectoryButton);
@@ -260,8 +248,6 @@ FLPRecoveryTool::FLPRecoveryTool()
     addAndMakeVisible(selectOutputFolderButton);
     addAndMakeVisible(recoverButton);
     addAndMakeVisible(exploreButton);
-
-    // ─── Status and Progress ─────────────────────────────────────────────────
 
     statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFAACCDD));
     statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
@@ -277,13 +263,12 @@ FLPRecoveryTool::FLPRecoveryTool()
     progressBar.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xFF44CC88));
     addAndMakeVisible(progressBar);
 
-    // ─── Results Table ──────────────────────────────────────────────────────
-
     tableModel = std::make_unique<TableModel>(*this);
     resultsTable.setModel(tableModel.get());
     resultsTable.setColour(juce::TableListBox::backgroundColourId, juce::Colour(0xFF0A0A1A));
     resultsTable.setColour(juce::TableListBox::textColourId, juce::Colour(0xFFC0C0E0));
     resultsTable.setColour(juce::TableListBox::outlineColourId, juce::Colour(0xFF333355));
+
     resultsTable.getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, juce::Colour(0xFF222244));
     resultsTable.getHeader().setColour(juce::TableHeaderComponent::textColourId, juce::Colour(0xFFAACCDD));
     resultsTable.getHeader().setColour(juce::TableHeaderComponent::outlineColourId, juce::Colour(0xFF333355));
@@ -295,12 +280,8 @@ FLPRecoveryTool::FLPRecoveryTool()
     resultsTable.getHeader().addColumn("Status", 5, 100);
     addAndMakeVisible(resultsTable);
 
-    // ─── Block Visualizer ────────────────────────────────────────────────────
-
     blockVisualizer = std::make_unique<BlockVisualizerComponent>();
     addAndMakeVisible(blockVisualizer.get());
-
-    // ─── Log Box ────────────────────────────────────────────────────────────
 
     logBox.setMultiLine(true);
     logBox.setReadOnly(true);
@@ -310,63 +291,76 @@ FLPRecoveryTool::FLPRecoveryTool()
     logBox.setFont(juce::Font(juce::FontOptions(12.0f)));
     addAndMakeVisible(logBox);
 
-    // ─── Scanner Callbacks ──────────────────────────────────────────────────
-
+    // ✅ FIX 1: Use SafePointer to prevent crashes when the host destroys the editor
     scanner.onProgressCallback = [this](float progress, const juce::String& status)
         {
             progressValue = progress;
-            juce::MessageManager::callAsync([this, status]
+            juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, status]
                 {
-                    statusLabel.setText(status, juce::dontSendNotification);
-                    progressLabel.setText(juce::String((int)(progressValue * 100)) + "%", juce::dontSendNotification);
+                    if (auto* tool = safeThis.getComponent())
+                    {
+                        tool->statusLabel.setText(status, juce::dontSendNotification);
+                        tool->progressLabel.setText(juce::String((int)(tool->progressValue * 100)) + "%", juce::dontSendNotification);
+                    }
                 });
         };
 
     scanner.onCandidateFoundCallback = [this](const FLPRecovery::Candidate& candidate)
         {
-            juce::MessageManager::callAsync([this, candidate]
+            juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, candidate]
                 {
-                    currentResult.candidates.push_back(candidate);
-                    resultsTable.updateContent();
-                    logMessage("🔍 Found FLP at offset 0x" +
-                        juce::String::toHexString((int64_t)candidate.offset) +
-                        " (" + candidate.version + ")");
-
-                    // Update block visualizer if we have block info
-                    if (!currentResult.allBlocks.empty())
+                    if (auto* tool = safeThis.getComponent())
                     {
-                        blockVisualizer->updateBlocks(currentResult.allBlocks);
+                        tool->currentResult.candidates.push_back(candidate);
+                        tool->resultsTable.updateContent();
+                        tool->logMessage("Found FLP at offset 0x" +
+                            juce::String::toHexString((int64_t)candidate.offset) +
+                            " (" + candidate.version + ")");
+
+                        if (!tool->currentResult.allBlocks.empty())
+                        {
+                            tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                        }
                     }
                 });
         };
 
     scanner.onBlockScanned = [this](const FLPRecovery::BlockInfo& block)
         {
-            juce::MessageManager::callAsync([this, block]
+            juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, block]
                 {
-                    currentResult.allBlocks.push_back(block);
-                    blockVisualizer->updateBlocks(currentResult.allBlocks);
+                    if (auto* tool = safeThis.getComponent())
+                    {
+                        tool->currentResult.allBlocks.push_back(block);
+                        tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                    }
                 });
         };
 
     scanner.onLogCallback = [this](const juce::String& msg)
         {
-            juce::MessageManager::callAsync([this, msg]
+            juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, msg]
                 {
-                    logMessage(msg);
+                    if (auto* tool = safeThis.getComponent())
+                        tool->logMessage(msg);
                 });
         };
-
-    // ─── Timer ──────────────────────────────────────────────────────────────
 
     startTimerHz(30);
 }
 
-FLPRecoveryTool::~FLPRecoveryTool() {}
+// ✅ FIX 2: Explicitly stop the timer to prevent teardown race conditions
+FLPRecoveryTool::~FLPRecoveryTool()
+{
+    stopTimer();
+}
 
 void FLPRecoveryTool::paint(juce::Graphics& g)
 {
-    // Modern dark gradient background
     juce::ColourGradient gradient(
         juce::Colour(0xFF0A0A1A), 0, 0,
         juce::Colour(0xFF1A1A3A), 0, (float)getHeight(),
@@ -379,10 +373,8 @@ void FLPRecoveryTool::paint(juce::Graphics& g)
 void FLPRecoveryTool::resized()
 {
     auto bounds = getLocalBounds().reduced(12);
-
-    // ─── Top Button Row ─────────────────────────────────────────────────────
-
     auto topRow = bounds.removeFromTop(40);
+
     int buttonWidth = 145;
     int gap = 6;
 
@@ -401,38 +393,28 @@ void FLPRecoveryTool::resized()
     exploreButton.setBounds(topRow.removeFromLeft(buttonWidth));
 
     bounds.removeFromTop(10);
-
-    // ─── Status and Progress ────────────────────────────────────────────────
-
     auto statusRow = bounds.removeFromTop(24);
     statusLabel.setBounds(statusRow.removeFromLeft(statusRow.getWidth() - 100));
     progressLabel.setBounds(statusRow.removeFromRight(70));
-    bounds.removeFromTop(4);
 
+    bounds.removeFromTop(4);
     auto progressRow = bounds.removeFromTop(22);
     progressBar.setBounds(progressRow);
 
     bounds.removeFromTop(8);
-
-    // ─── Split Layout ──────────────────────────────────────────────────────
-
-    // Table: 45%, Block Visualizer: 20%, Log: 35%
     auto tableArea = bounds.removeFromTop((int)(bounds.getHeight() * 0.45f));
     resultsTable.setBounds(tableArea);
 
     bounds.removeFromTop(4);
-
     auto visualizerArea = bounds.removeFromTop((int)(bounds.getHeight() * 0.28f));
     blockVisualizer->setBounds(visualizerArea);
 
     bounds.removeFromTop(4);
-
     logBox.setBounds(bounds);
 }
 
 void FLPRecoveryTool::timerCallback()
 {
-    // Update UI state
     if (scanner.isThreadRunning())
     {
         stopButton.setEnabled(true);
@@ -453,113 +435,123 @@ void FLPRecoveryTool::timerCallback()
     }
 }
 
-// ─── Button Callbacks ──────────────────────────────────────────────────────
-
+// ✅ FIX 3: SafePointer for Async File Choosers to prevent crashes if host closes plugin while dialog is open
 void FLPRecoveryTool::scanImageButtonClicked()
 {
     juce::FileChooser chooser("Select Disk Image File",
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
         "*.dmg;*.img;*.iso;*.bin;*.dd;*.raw;*");
+
+    juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
     chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [this](const juce::FileChooser& fc)
+        [safeThis](const juce::FileChooser& fc)
         {
-            auto file = fc.getResult();
-            if (file.existsAsFile())
+            if (auto* tool = safeThis.getComponent())
             {
-                currentResult = FLPRecovery::ScanResult();
-                resultsTable.updateContent();
-                blockVisualizer->updateBlocks(currentResult.allBlocks);
-                logBox.clear();
-                logMessage("🔍 Scanning: " + file.getFileName());
-                scanner.startScanImage(file);
+                auto file = fc.getResult();
+                if (file.existsAsFile())
+                {
+                    tool->currentResult = FLPRecovery::ScanResult();
+                    tool->resultsTable.updateContent();
+                    tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                    tool->logBox.clear();
+                    tool->logMessage("Scanning: " + file.getFileName());
+                    tool->scanner.startScanImage(file);
+                }
             }
         });
 }
 
 void FLPRecoveryTool::scanDriveButtonClicked()
 {
+    juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
+
 #if JUCE_WINDOWS
     auto* alert = new juce::AlertWindow(
         "Scan Physical Drive",
-        "Enter the drive path:\n\n"
+        "Enter the drive path:\n"
         "Examples:\n"
         "  \\\\.\\PhysicalDrive0  - First physical disk\n"
         "  \\\\.\\PhysicalDrive1  - Second physical disk\n"
-        "  C:                   - C: drive\n\n"
-        "⚠️  Requires Administrator privileges",
+        "  C:                   - C: drive\n"
+        "Requires Administrator privileges",
         juce::AlertWindow::InfoIcon
     );
-
     alert->addTextEditor("drive", "\\\\.\\PhysicalDrive0");
     alert->addButton("Scan", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     alert->enterModalState(true,
         juce::ModalCallbackFunction::create(
-            [this, alert](int result)
+            [safeThis, alert](int result)
             {
-                if (result == 1)
+                if (auto* tool = safeThis.getComponent())
                 {
-                    juce::String drivePath = alert->getTextEditorContents("drive").trim();
-                    if (drivePath.isNotEmpty())
+                    if (result == 1)
                     {
-                        currentResult = FLPRecovery::ScanResult();
-                        resultsTable.updateContent();
-                        blockVisualizer->updateBlocks(currentResult.allBlocks);
-                        logBox.clear();
-                        logMessage("💾 Scanning drive: " + drivePath);
-                        logMessage("⚠️  Scanning physical drives requires administrator privileges.");
-                        scanner.startScanDrive(drivePath);
-                    }
-                    else
-                    {
-                        logMessage("No drive path entered.");
+                        juce::String drivePath = alert->getTextEditorContents("drive").trim();
+                        if (drivePath.isNotEmpty())
+                        {
+                            tool->currentResult = FLPRecovery::ScanResult();
+                            tool->resultsTable.updateContent();
+                            tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                            tool->logBox.clear();
+                            tool->logMessage("Scanning drive: " + drivePath);
+                            tool->logMessage("Scanning physical drives requires administrator privileges.");
+                            tool->scanner.startScanDrive(drivePath);
+                        }
+                        else
+                        {
+                            tool->logMessage("No drive path entered.");
+                        }
                     }
                 }
+                delete alert;
             }
-        ),
-        true
+        ), true
     );
 #else
     auto* alert = new juce::AlertWindow(
         "Scan Physical Drive",
-        "Enter the drive path (e.g., /dev/sda, /dev/disk0):\n\n"
+        "Enter the drive path (e.g., /dev/sda, /dev/disk0):\n"
         "Common drive paths:\n"
         "  /dev/sda   - First SCSI/SATA disk\n"
         "  /dev/sdb   - Second SCSI/SATA disk\n"
         "  /dev/disk0 - First disk on macOS",
         juce::AlertWindow::InfoIcon
     );
-
     alert->addTextEditor("drive", "/dev/sda");
     alert->addButton("Scan", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     alert->enterModalState(true,
         juce::ModalCallbackFunction::create(
-            [this, alert](int result)
+            [safeThis, alert](int result)
             {
-                if (result == 1)
+                if (auto* tool = safeThis.getComponent())
                 {
-                    juce::String drivePath = alert->getTextEditorContents("drive").trim();
-                    if (drivePath.isNotEmpty())
+                    if (result == 1)
                     {
-                        currentResult = FLPRecovery::ScanResult();
-                        resultsTable.updateContent();
-                        blockVisualizer->updateBlocks(currentResult.allBlocks);
-                        logBox.clear();
-                        logMessage("💾 Scanning drive: " + drivePath);
-                        logMessage("⚠️  Scanning physical drives requires root privileges.");
-                        scanner.startScanDrive(drivePath);
-                    }
-                    else
-                    {
-                        logMessage("No drive path entered.");
+                        juce::String drivePath = alert->getTextEditorContents("drive").trim();
+                        if (drivePath.isNotEmpty())
+                        {
+                            tool->currentResult = FLPRecovery::ScanResult();
+                            tool->resultsTable.updateContent();
+                            tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                            tool->logBox.clear();
+                            tool->logMessage("Scanning drive: " + drivePath);
+                            tool->logMessage("Scanning physical drives requires root privileges.");
+                            tool->scanner.startScanDrive(drivePath);
+                        }
+                        else
+                        {
+                            tool->logMessage("No drive path entered.");
+                        }
                     }
                 }
+                delete alert;
             }
-        ),
-        true
+        ), true
     );
 #endif
 }
@@ -569,18 +561,23 @@ void FLPRecoveryTool::scanDirectoryButtonClicked()
     juce::FileChooser chooser("Select Directory to Scan",
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
         "*");
+
+    juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
     chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-        [this](const juce::FileChooser& fc)
+        [safeThis](const juce::FileChooser& fc)
         {
-            auto dir = fc.getResult();
-            if (dir.isDirectory())
+            if (auto* tool = safeThis.getComponent())
             {
-                currentResult = FLPRecovery::ScanResult();
-                resultsTable.updateContent();
-                blockVisualizer->updateBlocks(currentResult.allBlocks);
-                logBox.clear();
-                logMessage("📂 Scanning directory: " + dir.getFullPathName());
-                scanner.startScanDirectory(dir);
+                auto dir = fc.getResult();
+                if (dir.isDirectory())
+                {
+                    tool->currentResult = FLPRecovery::ScanResult();
+                    tool->resultsTable.updateContent();
+                    tool->blockVisualizer->updateBlocks(tool->currentResult.allBlocks);
+                    tool->logBox.clear();
+                    tool->logMessage("Scanning directory: " + dir.getFullPathName());
+                    tool->scanner.startScanDirectory(dir);
+                }
             }
         });
 }
@@ -588,7 +585,7 @@ void FLPRecoveryTool::scanDirectoryButtonClicked()
 void FLPRecoveryTool::stopButtonClicked()
 {
     scanner.stopScanning();
-    logMessage("⏹ Stopping scan...");
+    logMessage("Stopping scan...");
     statusLabel.setText("Stopped", juce::dontSendNotification);
 }
 
@@ -597,18 +594,23 @@ void FLPRecoveryTool::selectOutputFolderButtonClicked()
     juce::FileChooser chooser("Select Output Folder for Recovered Files",
         outputFolder.isDirectory() ? outputFolder : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
         "*");
+
+    juce::Component::SafePointer<FLPRecoveryTool> safeThis(this);
     chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-        [this](const juce::FileChooser& fc)
+        [safeThis](const juce::FileChooser& fc)
         {
-            auto dir = fc.getResult();
-            if (dir.isDirectory())
+            if (auto* tool = safeThis.getComponent())
             {
-                outputFolder = dir;
-                logMessage("📤 Output folder set to: " + outputFolder.getFullPathName());
-            }
-            else
-            {
-                logMessage("No output folder selected.");
+                auto dir = fc.getResult();
+                if (dir.isDirectory())
+                {
+                    tool->outputFolder = dir;
+                    tool->logMessage("Output folder set to: " + tool->outputFolder.getFullPathName());
+                }
+                else
+                {
+                    tool->logMessage("No output folder selected.");
+                }
             }
         });
 }
@@ -623,13 +625,13 @@ void FLPRecoveryTool::recoverButtonClicked()
 
     if (!outputFolder.isDirectory())
     {
-        logMessage("⚠️  Please select an output folder first using 'Select Output Folder'.");
+        logMessage("Please select an output folder first using 'Select Output Folder'.");
         return;
     }
 
-    logMessage("💾 Recovering " + juce::String((int)currentResult.candidates.size()) + " files to: " + outputFolder.getFullPathName());
+    logMessage("Recovering " + juce::String((int)currentResult.candidates.size()) + " files to: " + outputFolder.getFullPathName());
     int count = scanner.recoverAllWithBlocks(currentResult, outputFolder, true);
-    logMessage("✅ Recovered " + juce::String(count) + " files.");
+    logMessage("Recovered " + juce::String(count) + " files.");
 }
 
 void FLPRecoveryTool::exploreButtonClicked()
@@ -640,11 +642,9 @@ void FLPRecoveryTool::exploreButtonClicked()
     }
     else
     {
-        logMessage("📂 No output folder selected. Click 'Select Output Folder' first.");
+        logMessage("No output folder selected. Click 'Select Output Folder' first.");
     }
 }
-
-// ─── Logging ──────────────────────────────────────────────────────────────
 
 void FLPRecoveryTool::logMessage(const juce::String& msg)
 {
@@ -653,7 +653,6 @@ void FLPRecoveryTool::logMessage(const juce::String& msg)
 }
 
 // ─── File Drag and Drop ────────────────────────────────────────────────────
-
 bool FLPRecoveryTool::isInterestedInFileDrag(const juce::StringArray& files)
 {
     return files.size() == 1 && (files[0].endsWithIgnoreCase(".img") ||
@@ -674,7 +673,7 @@ void FLPRecoveryTool::filesDropped(const juce::StringArray& files, int, int)
             resultsTable.updateContent();
             blockVisualizer->updateBlocks(currentResult.allBlocks);
             logBox.clear();
-            logMessage("📁 Scanning dropped: " + file.getFileName());
+            logMessage("Scanning dropped: " + file.getFileName());
             scanner.startScanImage(file);
         }
     }
