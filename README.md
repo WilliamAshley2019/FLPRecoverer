@@ -8,3 +8,6 @@ Update pending later tonight early tomorrow, adding NTFS $MFT lookup to get inde
 TO DO.. consider creating an ability to freeze trim - this is more advanced so will be much later to add.
 
 the ability to image the disk such as DD automation to an external source and work from the image file. 
+
+
+There are a few bugs (such as file overwrites of same name) that should be updated in the next upload hopefully before I go to sleep today/tomorrow.
