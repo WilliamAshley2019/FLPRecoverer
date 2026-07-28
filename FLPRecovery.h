@@ -99,6 +99,23 @@ public:
     // ─── Validation ──────────────────────────────────────────────────────
     bool validateCandidate(Candidate& candidate, const uint8_t* data);
 
+    // Walks a recovered/reconstructed .flp file's own internal event stream
+    // (independent of where the bytes came from) to report how much of it
+    // is structurally intact, rather than just "did the copy succeed."
+    // Useful specifically for zero-filled/partial recoveries: this tells you
+    // whether the corruption is confined to the tail (often fine — FL Studio
+    // can sometimes still open a truncated project) or breaks the stream
+    // early (much less recoverable).
+    struct IntegrityReport
+    {
+        bool headerValid = false;
+        uint64_t totalEventStreamBytes = 0;
+        uint64_t validEventStreamBytes = 0;
+        uint64_t validEventCount = 0;
+        juce::String detail;
+    };
+    IntegrityReport analyzeEventStreamIntegrity(const juce::File& flpFile);
+
     // ─── Cancellation ────────────────────────────────────────────────────
     // Cooperative stop flag the scan loops check periodically. Call
     // requestStop() to ask an in-progress scan to bail out early; call

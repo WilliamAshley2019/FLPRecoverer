@@ -1031,3 +1031,143 @@ void FLPRecovery::stopPassiveMode()
         log("Passive mode stopped");
     }
 }
+// ─── Event Stream Integrity Analysis ───────────────────────────────────────
+// FLP's event stream (the data inside the FLdt chunk) is a sequence of
+// events, each starting with a 1-byte ID whose range determines the
+// payload shape:
+//   0x00-0x3F : byte event  — 1 byte payload
+//   0x40-0x7F : word event  — 2 byte payload
+//   0x80-0xBF : dword event — 4 byte payload
+//   0xC0-0xFF : text/data event — a variable-length ("varint", 7 bits per
+//               byte, MSB = continuation) size prefix, then that many bytes
+// This is the standard encoding used by every FLP-parsing tool; walking it
+// structurally (without needing to know what any specific event *means*)
+// is enough to tell how far a file's byte stream is still self-consistent.
+FLPRecovery::IntegrityReport FLPRecovery::analyzeEventStreamIntegrity(const juce::File& flpFile)
+{
+    IntegrityReport report;
+
+    juce::FileInputStream stream(flpFile);
+    if (!stream.openedOk())
+    {
+        report.detail = "Could not open file for analysis.";
+        return report;
+    }
+
+    juce::int64 fileSize = stream.getTotalLength();
+    if (fileSize < (juce::int64)(HEADER_SIZE + FLDT_HEADER_SIZE))
+    {
+        report.detail = "File too small to contain a header.";
+        return report;
+    }
+
+    std::vector<uint8_t> buffer((size_t)fileSize);
+    if (stream.read(buffer.data(), (int)fileSize) != fileSize)
+    {
+        report.detail = "Could not read the whole file.";
+        return report;
+    }
+
+    if (memcmp(buffer.data(), FLHD_MAGIC, 4) != 0 ||
+        memcmp(buffer.data() + HEADER_SIZE, FLDT_MAGIC, 4) != 0)
+    {
+        report.detail = "Header missing or corrupt — not analyzable as FLP structure.";
+        return report;
+    }
+
+    report.headerValid = true;
+
+    uint32_t declaredDataSize = readU32LE(buffer.data() + HEADER_SIZE + 4);
+    uint64_t streamStart = HEADER_SIZE + FLDT_HEADER_SIZE;
+    uint64_t streamAvailable = (uint64_t)fileSize > streamStart ? (uint64_t)fileSize - streamStart : 0;
+    uint64_t streamLength = juce::jmin((uint64_t)declaredDataSize, streamAvailable);
+
+    report.totalEventStreamBytes = streamLength;
+
+    const uint8_t* data = buffer.data() + streamStart;
+    uint64_t pos = 0;
+    uint64_t events = 0;
+
+    while (pos < streamLength)
+    {
+        uint8_t id = data[pos];
+        uint64_t eventStart = pos;
+        uint64_t payloadSize = 0;
+        uint64_t headerBytes = 1;
+
+        if (id < 0x40)
+        {
+            payloadSize = 1;
+        }
+        else if (id < 0x80)
+        {
+            payloadSize = 2;
+        }
+        else if (id < 0xC0)
+        {
+            payloadSize = 4;
+        }
+        else
+        {
+            // Variable-length: read a 7-bit-per-byte varint size, MSB of
+            // each byte signals "more bytes follow".
+            uint64_t varintPos = pos + 1;
+            uint64_t size = 0;
+            int shift = 0;
+            bool terminated = false;
+
+            for (int i = 0; i < 9 && varintPos + i < streamLength; ++i) // cap at 9 bytes (63 bits) to avoid runaway
+            {
+                uint8_t b = data[varintPos + i];
+                size |= (uint64_t)(b & 0x7F) << shift;
+                shift += 7;
+                headerBytes++;
+                if ((b & 0x80) == 0)
+                {
+                    terminated = true;
+                    break;
+                }
+            }
+
+            if (!terminated)
+            {
+                // Ran out of buffer mid-varint — stream is broken from here.
+                break;
+            }
+
+            payloadSize = size;
+        }
+
+        // If the declared payload would run past the end of the stream,
+        // this is exactly where a partial/zero-filled recovery starts
+        // producing garbage — stop here rather than reading past it.
+        if (eventStart + headerBytes + payloadSize > streamLength)
+            break;
+
+        pos = eventStart + headerBytes + payloadSize;
+        events++;
+    }
+
+    report.validEventStreamBytes = pos;
+    report.validEventCount = events;
+
+    double pct = report.totalEventStreamBytes > 0
+        ? (100.0 * (double)report.validEventStreamBytes / (double)report.totalEventStreamBytes)
+        : 0.0;
+
+    if (report.validEventStreamBytes >= report.totalEventStreamBytes)
+    {
+        report.detail = "Event stream parses cleanly end-to-end (" + juce::String((int)events) + " events).";
+    }
+    else
+    {
+        report.detail = juce::String((int)events) + " event(s) parsed cleanly, covering " +
+            juce::String(pct, 1) + "% of the stream (" +
+            juce::String((int64_t)report.validEventStreamBytes) + " of " +
+            juce::String((int64_t)report.totalEventStreamBytes) + " bytes) before the structure broke down — " +
+            "content past that point is unrecoverable garbage, but FL Studio may still be able to " +
+            "open the intact portion depending on which chunk was cut off.";
+    }
+
+    return report;
+}

@@ -795,14 +795,29 @@ void FLPRecoveryTool::recoverButtonClicked()
                 outFile = outputFolder.getNonexistentChildFile(
                     outFile.getFileNameWithoutExtension(), outFile.getFileExtension());
 
-            if (ntfsScanner.getEngine().reconstructFile(candidate, outFile))
+            auto report = ntfsScanner.getEngine().reconstructFile(candidate, outFile);
+            if (report.fullyRecovered)
             {
                 ntfsRecovered++;
+                logMessage("Recovered " + candidate.fileName + ": " + report.detail);
+            }
+            else if (report.bytesRecovered > 0)
+            {
+                // Partial recovery still counts — it's a usable file on
+                // disk, just with some fragment(s) zero-filled.
+                ntfsRecovered++;
+                logMessage("PARTIAL recovery of " + candidate.fileName + " (" +
+                    juce::String((int64_t)report.bytesRecovered) + " of " +
+                    juce::String((int64_t)report.bytesExpected) + " bytes): " + report.detail);
+
+                // Worth checking exactly how much of the file is still
+                // structurally intact, not just how many bytes copied.
+                auto integrity = scanner.analyzeEventStreamIntegrity(outFile);
+                logMessage("Content analysis for " + candidate.fileName + ": " + integrity.detail);
             }
             else
             {
-                logMessage("Failed to reconstruct " + candidate.fileName + ": " +
-                    ntfsScanner.getEngine().getLastError());
+                logMessage("Failed to reconstruct " + candidate.fileName + ": " + report.detail);
             }
         }
 

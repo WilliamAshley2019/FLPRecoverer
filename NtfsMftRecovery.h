@@ -51,6 +51,25 @@ public:
         int fragmentCount = 0;
     };
 
+    // Per-fragment outcome, so a caller can see exactly which parts of a
+    // file came back and which didn't, instead of a single pass/fail bit.
+    struct FragmentOutcome
+    {
+        uint64_t startLcn = 0;
+        uint64_t clusterCount = 0;
+        bool succeeded = false;
+        bool likelyBeyondVolume = false; // LCN was outside the volume entirely — a parsing/corruption signal, not "reallocated"
+    };
+
+    struct ReconstructReport
+    {
+        bool fullyRecovered = false;
+        uint64_t bytesRecovered = 0;
+        uint64_t bytesExpected = 0;
+        std::vector<FragmentOutcome> fragments;
+        juce::String detail;
+    };
+
     NtfsMftRecovery();
     ~NtfsMftRecovery();
 
@@ -59,6 +78,7 @@ public:
     void closeVolume();
 
     uint32_t getBytesPerCluster() const { return bytesPerSector * sectorsPerCluster; }
+    uint64_t getTotalVolumeClusters() const { return totalVolumeClusters; }
     juce::String getLastError() const { return lastError; }
 
     // Scans every MFT record for deleted entries whose filename matches
@@ -70,7 +90,10 @@ public:
 
     // Reads each cluster run in order directly off the volume and
     // concatenates them into outputFile — the actual fragment-stitching step.
-    bool reconstructFile(const DeletedFileCandidate& candidate, const juce::File& outputFile);
+    // Best-effort: a fragment that can't be read is zero-filled rather than
+    // aborting the whole file, so you still get a partial result with a
+    // precise report of what's missing and why.
+    ReconstructReport reconstructFile(const DeletedFileCandidate& candidate, const juce::File& outputFile);
 
 private:
     void* volumeHandle = nullptr; // HANDLE, void* to keep this header includable cross-platform
@@ -83,6 +106,7 @@ private:
     int32_t  rawClustersPerMftRecord = 0;
     uint32_t mftRecordSize = 1024;
     uint64_t totalMftRecords = 0;
+    uint64_t totalVolumeClusters = 0;
 
     std::vector<ClusterRun> mftDataRuns; // the $MFT's own (possibly fragmented) layout
 

@@ -153,6 +153,7 @@ bool NtfsMftRecovery::readBootSector()
 
     bytesPerSector = readU16(sector.data() + 0x0B);
     sectorsPerCluster = sector[0x0D];
+    uint64_t totalSectors = readU64(sector.data() + 0x28);
     mftStartLcn = readU64(sector.data() + 0x30);
     rawClustersPerMftRecord = (int8_t)sector[0x40];
 
@@ -174,6 +175,8 @@ bool NtfsMftRecovery::readBootSector()
         lastError = "Unreasonable MFT record size decoded from boot sector.";
         return false;
     }
+
+    totalVolumeClusters = totalSectors / sectorsPerCluster;
 
     return true;
 }
@@ -523,37 +526,48 @@ std::vector<NtfsMftRecovery::DeletedFileCandidate> NtfsMftRecovery::scanForDelet
     return results;
 }
 
-bool NtfsMftRecovery::reconstructFile(const DeletedFileCandidate& candidate, const juce::File& outputFile)
+NtfsMftRecovery::ReconstructReport NtfsMftRecovery::reconstructFile(
+    const DeletedFileCandidate& candidate, const juce::File& outputFile)
 {
+    ReconstructReport report;
+    report.bytesExpected = candidate.realSize;
+
     if (candidate.wasResident)
     {
         juce::FileOutputStream out(outputFile);
         if (!out.openedOk())
         {
             lastError = "Could not create output file: " + outputFile.getFullPathName();
-            return false;
+            report.detail = lastError;
+            return report;
         }
         out.write(candidate.residentData.data(), candidate.residentData.size());
         out.flush();
-        return true;
+        report.bytesRecovered = candidate.residentData.size();
+        report.fullyRecovered = (report.bytesRecovered >= report.bytesExpected);
+        report.detail = "Resident (stored inside the MFT record itself) — recovered in full.";
+        return report;
     }
 
     if (candidate.dataRuns.empty())
     {
         lastError = "No data runs to reconstruct from.";
-        return false;
+        report.detail = lastError;
+        return report;
     }
 
     juce::FileOutputStream out(outputFile);
     if (!out.openedOk())
     {
         lastError = "Could not create output file: " + outputFile.getFullPathName();
-        return false;
+        report.detail = lastError;
+        return report;
     }
 
     uint32_t clusterSize = getBytesPerCluster();
     uint64_t bytesWritten = 0;
     uint64_t targetSize = candidate.realSize;
+    int failedCount = 0;
 
     for (const auto& run : candidate.dataRuns)
     {
@@ -562,37 +576,84 @@ bool NtfsMftRecovery::reconstructFile(const DeletedFileCandidate& candidate, con
         uint64_t runBytes = run.clusterCount * clusterSize;
         uint64_t bytesToUseFromRun = juce::jmin(runBytes, targetSize - bytesWritten);
 
+        FragmentOutcome outcome;
+        outcome.startLcn = run.startLcn;
+        outcome.clusterCount = run.clusterCount;
+
         if (run.isSparse)
         {
             // Logically all zeros — write zero-filled bytes to preserve
             // correct file layout rather than skipping ahead.
             std::vector<uint8_t> zeros((size_t)bytesToUseFromRun, 0);
             out.write(zeros.data(), zeros.size());
+            outcome.succeeded = true;
+        }
+        else if (totalVolumeClusters > 0 && run.startLcn + run.clusterCount > totalVolumeClusters)
+        {
+            // The run points entirely or partly outside the volume's own
+            // cluster range. This is NOT what a normal "reallocated since
+            // deletion" fragment looks like (those clusters still exist and
+            // read fine, just with different data) — it means the data-run
+            // decode produced a nonsensical location, most likely because
+            // this MFT record is itself stale/corrupt or was misread.
+            std::vector<uint8_t> zeros((size_t)bytesToUseFromRun, 0);
+            out.write(zeros.data(), zeros.size());
+            outcome.succeeded = false;
+            outcome.likelyBeyondVolume = true;
+            failedCount++;
         }
         else
         {
             uint64_t physicalByteOffset = run.startLcn * clusterSize;
             std::vector<uint8_t> buffer;
-            if (!readVolumeBytes(physicalByteOffset, bytesToUseFromRun, buffer))
+            if (readVolumeBytes(physicalByteOffset, bytesToUseFromRun, buffer) &&
+                buffer.size() == bytesToUseFromRun)
             {
-                lastError = "Failed reading fragment at LCN " + juce::String((int64_t)run.startLcn) +
-                    " while reconstructing " + candidate.fileName;
-                return false;
+                out.write(buffer.data(), buffer.size());
+                outcome.succeeded = true;
             }
-            out.write(buffer.data(), buffer.size());
+            else
+            {
+                // Cluster is within the volume but couldn't be read (bad
+                // sector, access race, etc). Zero-fill so later fragments
+                // still land at the right file offset, and keep going.
+                std::vector<uint8_t> zeros((size_t)bytesToUseFromRun, 0);
+                out.write(zeros.data(), zeros.size());
+                outcome.succeeded = false;
+                failedCount++;
+            }
         }
 
+        report.fragments.push_back(outcome);
         bytesWritten += bytesToUseFromRun;
     }
 
     out.flush();
+    report.bytesRecovered = bytesWritten;
+    report.fullyRecovered = (failedCount == 0 && bytesWritten >= targetSize);
 
-    if (bytesWritten < targetSize)
+    if (failedCount == 0)
     {
-        lastError = "Reconstructed " + candidate.fileName + " short by " +
-            juce::String((int64_t)(targetSize - bytesWritten)) + " bytes — some fragments may be unreadable.";
-        return false;
+        report.detail = "All " + juce::String((int)report.fragments.size()) + " fragment(s) recovered successfully.";
+    }
+    else
+    {
+        int beyondVolumeCount = 0;
+        for (auto& f : report.fragments) if (f.likelyBeyondVolume) beyondVolumeCount++;
+
+        report.detail = juce::String(failedCount) + " of " + juce::String((int)report.fragments.size()) +
+            " fragment(s) could not be read (zero-filled in output). ";
+
+        if (beyondVolumeCount > 0)
+            report.detail += juce::String(beyondVolumeCount) +
+                " pointed entirely outside the volume — likely a stale/misread MFT record, not reallocation. ";
+
+        if (failedCount > beyondVolumeCount)
+            report.detail += juce::String(failedCount - beyondVolumeCount) +
+                " were within the volume but unreadable — most likely those clusters have already been "
+                "reused by a newer file since this one was deleted, or contain a bad sector.";
     }
 
-    return true;
+    lastError = report.detail;
+    return report;
 }
