@@ -5,7 +5,7 @@ So the MFT search is working and can find deleted flp records.. however currentl
 On a HDD or SSD with trim turned off this may be more forgiving.
 However it works to discover the file name size and location of the file (was). This is progress. 
 
- 2026-07-28
+ 2026-07-27
  Currently rebuilding / debugging, optimistic this will work in the next day or so. 
 Update pending later tonight early tomorrow, adding NTFS $MFT lookup to get index locations
 
