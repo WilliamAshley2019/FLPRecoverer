@@ -1,29 +1,35 @@
 #include "MainComponent.h"
 
-//==============================================================================
 MainComponent::MainComponent()
 {
-    setSize (600, 400);
+    titleLabel.setText("FLPRecoverTool — launch test", juce::dontSendNotification);
+    titleLabel.setJustificationType(juce::Justification::centred);
+    titleLabel.setFont(juce::FontOptions(24.0f));
+    addAndMakeVisible(titleLabel);
+
+    testButton.onClick = [this]
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::InfoIcon,
+                "Working",
+                "The window and event loop are both alive.");
+        };
+    addAndMakeVisible(testButton);
+
+    setSize(600, 400);
 }
 
-MainComponent::~MainComponent()
-{
-}
+MainComponent::~MainComponent() {}
 
-//==============================================================================
-void MainComponent::paint (juce::Graphics& g)
+void MainComponent::paint(juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
-
-    g.setFont (juce::FontOptions (16.0f));
-    g.setColour (juce::Colours::white);
-    g.drawText ("Hello World!", getLocalBounds(), juce::Justification::centred, true);
+    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
 void MainComponent::resized()
 {
-    // This is called when the MainComponent is resized.
-    // If you add any child components, this is where you should
-    // update their positions.
+    auto area = getLocalBounds().reduced(20);
+    titleLabel.setBounds(area.removeFromTop(60));
+    area.removeFromTop(20);
+    testButton.setBounds(area.removeFromTop(40).withSizeKeepingCentre(200, 40));
 }

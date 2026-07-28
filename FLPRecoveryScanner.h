@@ -33,7 +33,12 @@ public:
             };
     }
 
-  
+    ~FLPRecoveryScanner() override
+    {
+        requestStop();
+        waitForThreadToExit(10000);
+    }
+
     // ─── Start Scanning ──────────────────────────────────────────────────
     void startScanImage(const juce::File& imageFile)
     {
@@ -41,7 +46,7 @@ public:
         m_imageFile = imageFile;
         m_drivePath = "";
         m_directory = juce::File();
-        m_stopScanning = false;
+        resetStopRequest();
         startThread();
     }
 
@@ -51,7 +56,7 @@ public:
         m_drivePath = drivePath;
         m_imageFile = juce::File();
         m_directory = juce::File();
-        m_stopScanning = false;
+        resetStopRequest();
         startThread();
     }
 
@@ -61,13 +66,13 @@ public:
         m_directory = directory;
         m_imageFile = juce::File();
         m_drivePath = "";
-        m_stopScanning = false;
+        resetStopRequest();
         startThread();
     }
 
     void stopScanning()
     {
-        m_stopScanning = true;
+        requestStop();
     }
 
     // ─── Results ─────────────────────────────────────────────────────────
@@ -81,7 +86,6 @@ public:
 protected:
     void run() override
     {
-        m_stopScanning = false;
         m_result = FLPRecovery::ScanResult();
 
         switch (m_scanMode)
@@ -98,7 +102,7 @@ protected:
         }
 
         if (onProgressCallback)
-            onProgressCallback(1.0f, "Scan complete");
+            onProgressCallback(1.0f, isStopRequested() ? "Scan stopped" : "Scan complete");
     }
 
 private:
@@ -109,5 +113,4 @@ private:
     juce::String m_drivePath;
     juce::File m_directory;
     FLPRecovery::ScanResult m_result;
-    std::atomic<bool> m_stopScanning{ false };
 };

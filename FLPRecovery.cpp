@@ -267,6 +267,13 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
 
     while (currentOffset < fileSize && blocksProcessed < totalBlocks)
     {
+        if (isStopRequested())
+        {
+            log("Scan stopped by user.");
+            result.lastError = "Stopped by user";
+            break;
+        }
+
         if (!ReadFile(hDrive, blockBuffer.data(), (DWORD)blockSize, &bytesRead, NULL))
             break;
 
@@ -356,6 +363,13 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
 
     while (currentOffset < (uint64_t)fileSize)
     {
+        if (isStopRequested())
+        {
+            log("Scan stopped by user.");
+            result.lastError = "Stopped by user";
+            break;
+        }
+
         size_t bytesRead = stream.read(blockBuffer.data(), (size_t)blockSize);
         if (bytesRead == 0) break;
 
@@ -443,6 +457,13 @@ FLPRecovery::ScanResult FLPRecovery::scanImage(const juce::File& imageFile)
 
     while (pos < fileSize)
     {
+        if (isStopRequested())
+        {
+            log("Scan stopped by user.");
+            result.lastError = "Stopped by user";
+            break;
+        }
+
         size_t readSize = (size_t)juce::jmin((juce::int64)chunkSize, fileSize - pos);
 
         if (!firstChunk)
@@ -571,6 +592,13 @@ FLPRecovery::ScanResult FLPRecovery::scanDirectory(const juce::File& directory)
 
     for (int i = 0; i < flpFiles.size(); ++i)
     {
+        if (isStopRequested())
+        {
+            log("Scan stopped by user.");
+            result.lastError = "Stopped by user";
+            break;
+        }
+
         const auto& file = flpFiles[i];
         juce::FileInputStream stream(file);
         if (!stream.openedOk()) continue;

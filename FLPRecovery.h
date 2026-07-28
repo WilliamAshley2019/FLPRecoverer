@@ -65,10 +65,6 @@ public:
     ~FLPRecovery();
 
     // ─── Main Scanning Methods ──────────────────────────────────────────
-    ScanResult scanDriveRaw(const juce::String& drivePath,
-        uint64_t startOffset = 0,
-        uint64_t scanSize = 0);
-
     ScanResult scanDriveWithBlocks(const juce::String& drivePath,
         uint64_t blockSize = 4096,
         uint64_t startOffset = 0,
@@ -102,6 +98,15 @@ public:
 
     // ─── Validation ──────────────────────────────────────────────────────
     bool validateCandidate(Candidate& candidate, const uint8_t* data);
+
+    // ─── Cancellation ────────────────────────────────────────────────────
+    // Cooperative stop flag the scan loops check periodically. Call
+    // requestStop() to ask an in-progress scan to bail out early; call
+    // resetStopRequest() before starting a new scan so a previous stop
+    // doesn't immediately cancel it.
+    void requestStop() { m_stopRequested = true; }
+    void resetStopRequest() { m_stopRequested = false; }
+    bool isStopRequested() const { return m_stopRequested.load(); }
 
     // ─── Settings ──────────────────────────────────────────────────────
     void setMinFileSize(uint64_t minSize) { m_minFileSize = minSize; }
@@ -165,6 +170,7 @@ private:
     uint64_t m_maxFileSize = 500 * 1024 * 1024;
     uint64_t m_blockSize = 4096;
     bool m_verbose = false;
+    std::atomic<bool> m_stopRequested{ false };
 
     // ─── Constants ──────────────────────────────────────────────────────
     static constexpr uint8_t FLHD_MAGIC[4] = { 0x46, 0x4C, 0x68, 0x64 };

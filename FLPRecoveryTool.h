@@ -52,6 +52,11 @@ private:
     // ─── Output Folder ──────────────────────────────────────────────────
     juce::File outputFolder;
 
+    // FileChooser::launchAsync() is non-blocking — the dialog is torn down
+    // if the FileChooser object is destroyed before the callback fires, so
+    // this must be a persistent member, not a local stack variable.
+    std::unique_ptr<juce::FileChooser> fileChooser;
+
     // ─── Table Model ────────────────────────────────────────────────────
     class TableModel : public juce::TableListBoxModel
     {
