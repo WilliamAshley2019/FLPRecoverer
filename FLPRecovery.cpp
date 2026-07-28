@@ -627,6 +627,8 @@ FLPRecovery::ScanResult FLPRecovery::scanDirectory(const juce::File& directory)
                     result.candidates.push_back(candidate);
                     result.validFiles++;
                     log("Valid FLP: " + file.getFileName() + " (" + candidate.version + ")");
+
+                    if (onCandidateFound) onCandidateFound(candidate);
                 }
             }
         }
@@ -808,6 +810,29 @@ bool FLPRecovery::recoverCandidate(const Candidate& candidate,
 }
 
 // ─── Recover All ───────────────────────────────────────────────────────────
+juce::String FLPRecovery::makeRecoveredFilename(const Candidate& candidate, int indexForUniqueness)
+{
+    if (!candidate.isPhysicalDrive && candidate.sourcePath.isNotEmpty())
+    {
+        juce::File source(candidate.sourcePath);
+        if (source.existsAsFile())
+        {
+            // This came from an existing file on disk (a directory scan) —
+            // its own name is far more useful than an offset, and avoids
+            // every candidate colliding on the same generated name.
+            return source.getFileName();
+        }
+    }
+
+    juce::String filename = "recovered_flp_" +
+        juce::String::toHexString((int64_t)candidate.offset) +
+        "_" + candidate.version +
+        "_" + juce::String(indexForUniqueness) +
+        ".flp";
+
+    return filename.replaceCharacters("\\/:?\"<>|", "________");
+}
+
 int FLPRecovery::recoverAll(const ScanResult& result,
     const juce::File& outputFolder)
 {
@@ -816,14 +841,10 @@ int FLPRecovery::recoverAll(const ScanResult& result,
     if (!outputFolder.isDirectory())
         outputFolder.createDirectory();
 
-    for (const auto& candidate : result.candidates)
+    for (size_t i = 0; i < result.candidates.size(); ++i)
     {
-        juce::String filename = "recovered_flp_" +
-            juce::String::toHexString((int64_t)candidate.offset) +
-            "_" + candidate.version +
-            ".flp";
-
-        filename = filename.replaceCharacters("\\/:?\"<>|", "_");
+        const auto& candidate = result.candidates[i];
+        juce::String filename = makeRecoveredFilename(candidate, (int)i);
 
         if (recoverCandidate(candidate, outputFolder, filename))
             recovered++;
@@ -873,14 +894,10 @@ int FLPRecovery::recoverAllWithBlocks(const ScanResult& result,
     if (!outputFolder.isDirectory())
         outputFolder.createDirectory();
 
-    for (const auto& candidate : result.candidates)
+    for (size_t i = 0; i < result.candidates.size(); ++i)
     {
-        juce::String filename = "recovered_flp_" +
-            juce::String::toHexString((int64_t)candidate.offset) +
-            "_" + candidate.version +
-            ".flp";
-
-        filename = filename.replaceCharacters("\\/:?\"<>|", "_");
+        const auto& candidate = result.candidates[i];
+        juce::String filename = makeRecoveredFilename(candidate, (int)i);
 
         if (recoverCandidateWithBlocks(candidate, outputFolder, backupBlocks, filename))
             recovered++;

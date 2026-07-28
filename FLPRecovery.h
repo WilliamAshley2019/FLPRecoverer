@@ -108,6 +108,17 @@ public:
     void resetStopRequest() { m_stopRequested = false; }
     bool isStopRequested() const { return m_stopRequested.load(); }
 
+private:
+    // Directory-scanned candidates keep their original filename (they're
+    // whole existing files, not carved fragments) to avoid every candidate
+    // colliding on the same offset-based name. Carved candidates (from an
+    // image or raw drive, which have no original filename) fall back to an
+    // offset+version name, disambiguated with an index so duplicates can't
+    // collide either.
+    static juce::String makeRecoveredFilename(const Candidate& candidate, int indexForUniqueness);
+
+public:
+
     // ─── Settings ──────────────────────────────────────────────────────
     void setMinFileSize(uint64_t minSize) { m_minFileSize = minSize; }
     void setMaxFileSize(uint64_t maxSize) { m_maxFileSize = maxSize; }

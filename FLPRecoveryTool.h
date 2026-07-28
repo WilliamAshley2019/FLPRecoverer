@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "FLPRecoveryScanner.h"
+#include "NtfsScannerThread.h"
 
 // Forward declaration
 class BlockVisualizerComponent;
@@ -30,6 +31,7 @@ private:
     juce::TextButton scanImageButton;
     juce::TextButton scanDriveButton;
     juce::TextButton scanDirectoryButton;
+    juce::TextButton scanNtfsDeletedButton;
     juce::TextButton stopButton;
     juce::TextButton selectOutputFolderButton;
     juce::TextButton recoverButton;
@@ -48,6 +50,9 @@ private:
     // ─── Data ────────────────────────────────────────────────────────────
     FLPRecoveryScanner scanner;
     FLPRecovery::ScanResult currentResult;
+
+    NtfsScannerThread ntfsScanner;
+    std::vector<NtfsMftRecovery::DeletedFileCandidate> ntfsCandidates;
 
     // ─── Output Folder ──────────────────────────────────────────────────
     juce::File outputFolder;
@@ -75,6 +80,7 @@ private:
     void scanImageButtonClicked();
     void scanDriveButtonClicked();
     void scanDirectoryButtonClicked();
+    void scanNtfsDeletedButtonClicked();
     void stopButtonClicked();
     void selectOutputFolderButtonClicked();
     void recoverButtonClicked();
