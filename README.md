@@ -1,7 +1,11 @@
 WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
+2026-07-28 
+It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
+So the MFT search is working and can find deleted flp records.. however currently not sure how or if recovery is possible. As with trim even if the record is there the data likely isn't.
+On a HDD or SSD with trim turned off this may be more forgiving.
+However it works to discover the file name size and location of the file (was). This is progress. 
 
-
- 
+ 2026-07-28
  Currently rebuilding / debugging, optimistic this will work in the next day or so. 
 Update pending later tonight early tomorrow, adding NTFS $MFT lookup to get index locations
 
