@@ -11,6 +11,8 @@ TO DO  1. add selection toggle.
 
 currently I am trying to determine if any magic is possible to unvanish trimmed data.
 
+note in the current version a file may recover successfully but be filled with NUL if nothing is at the location of recovery, this is not precognative shaedenfrued it is
+just an attempt at recovery.
 
  2026-07-27
  Currently rebuilding / debugging, optimistic this will work in the next day or so. 
