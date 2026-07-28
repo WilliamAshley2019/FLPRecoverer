@@ -1,3 +1,7 @@
+WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
+
+
+ 
  Currently rebuilding / debugging, optimistic this will work in the next day or so. 
 Update pending later tonight early tomorrow, adding NTFS $MFT lookup to get index locations
 
