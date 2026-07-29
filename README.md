@@ -1,4 +1,9 @@
 WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
+It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
+
+2026-07-28 - added Trim detection and disale (havn't tested disabling function yet), added DD clone function, havn't tested yet. 
+
+
 2026-07-28 
 It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
 So the MFT search is working and can find deleted flp records.. however currently not sure how or if recovery is possible. As with trim even if the record is there the data likely isn't.
