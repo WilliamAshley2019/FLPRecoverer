@@ -283,6 +283,8 @@ FLPRecoveryTool::FLPRecoveryTool()
     setupButton(scanDriveButton, "Scan Physical Drive...", juce::Colour(0xFF6A2A4A));
     setupButton(scanDirectoryButton, "Scan Directory...", juce::Colour(0xFF2A6A4A));
     setupButton(scanNtfsDeletedButton, "Scan Deleted (NTFS)...", juce::Colour(0xFF6A5A2A));
+    setupButton(imageDriveButton, "Image Drive (DD)...", juce::Colour(0xFF4A2A6A));
+    setupButton(toggleTrimButton, "TRIM Status...", juce::Colour(0xFF6A4A2A));
     setupButton(stopButton, "Stop", juce::Colour(0xFF8A2A2A));
     setupButton(selectOutputFolderButton, "Select Output Folder", juce::Colour(0xFF4A4A7A));
     setupButton(recoverButton, "Recover All", juce::Colour(0xFF2A8A5A));
@@ -294,6 +296,8 @@ FLPRecoveryTool::FLPRecoveryTool()
     addAndMakeVisible(scanDriveButton);
     addAndMakeVisible(scanDirectoryButton);
     addAndMakeVisible(scanNtfsDeletedButton);
+    addAndMakeVisible(imageDriveButton);
+    addAndMakeVisible(toggleTrimButton);
     addAndMakeVisible(stopButton);
     addAndMakeVisible(selectOutputFolderButton);
     addAndMakeVisible(recoverButton);
@@ -346,6 +350,8 @@ FLPRecoveryTool::FLPRecoveryTool()
     scanDriveButton.onClick = [this] { scanDriveButtonClicked(); };
     scanDirectoryButton.onClick = [this] { scanDirectoryButtonClicked(); };
     scanNtfsDeletedButton.onClick = [this] { scanNtfsDeletedButtonClicked(); };
+    imageDriveButton.onClick = [this] { imageDriveButtonClicked(); };
+    toggleTrimButton.onClick = [this] { toggleTrimButtonClicked(); };
     stopButton.onClick = [this] { stopButtonClicked(); };
     selectOutputFolderButton.onClick = [this] { selectOutputFolderButtonClicked(); };
     recoverButton.onClick = [this] { recoverButtonClicked(); };
@@ -426,6 +432,32 @@ FLPRecoveryTool::FLPRecoveryTool()
                 });
         };
 
+    diskImager.onProgressCallback = [this](float progress, const juce::String& status)
+        {
+            progressValue = progress;
+            juce::MessageManager::callAsync([this, status]
+                {
+                    statusLabel.setText(status, juce::dontSendNotification);
+                    progressLabel.setText(juce::String((int)(progressValue * 100)) + "%", juce::dontSendNotification);
+                });
+        };
+
+    diskImager.onLogCallback = [this](const juce::String& msg)
+        {
+            juce::MessageManager::callAsync([this, msg]
+                {
+                    logMessage(msg);
+                });
+        };
+
+    diskImager.onCompleteCallback = [this](bool success)
+        {
+            juce::MessageManager::callAsync([this, success]
+                {
+                    statusLabel.setText(success ? "Imaging complete" : "Imaging stopped/failed", juce::dontSendNotification);
+                });
+        };
+
     startTimerHz(30);
 
     // The very first resized() fired synchronously back at setSize(1000, 750)
@@ -467,11 +499,19 @@ void FLPRecoveryTool::resized()
 
     bounds.removeFromTop(6);
 
-    // Row 2: stop / output folder / recover / explore
+    // Row 2: forensics utilities — imaging, TRIM, stop
+    auto utilRow = bounds.removeFromTop(36);
+    int utilButtonWidth = (utilRow.getWidth() - gap * 2 - 90) / 2;
+    imageDriveButton.setBounds(utilRow.removeFromLeft(utilButtonWidth));
+    utilRow.removeFromLeft(gap);
+    toggleTrimButton.setBounds(utilRow.removeFromLeft(utilButtonWidth));
+    utilRow.removeFromLeft(gap);
+    stopButton.setBounds(utilRow);
+
+    bounds.removeFromTop(6);
+
+    // Row 3: output folder / recover / explore
     auto actionRow = bounds.removeFromTop(36);
-    actionRow.removeFromLeft(0);
-    stopButton.setBounds(actionRow.removeFromLeft(90));
-    actionRow.removeFromLeft(gap * 2);
     int remainingWidth = actionRow.getWidth();
     int outputFolderWidth = (int)(remainingWidth * 0.40f);
     int recoverWidth = (int)(remainingWidth * 0.30f);
@@ -506,7 +546,7 @@ void FLPRecoveryTool::resized()
 
 void FLPRecoveryTool::timerCallback()
 {
-    const bool anyRunning = scanner.isThreadRunning() || ntfsScanner.isThreadRunning();
+    const bool anyRunning = scanner.isThreadRunning() || ntfsScanner.isThreadRunning() || diskImager.isThreadRunning();
 
     if (anyRunning)
     {
@@ -515,6 +555,7 @@ void FLPRecoveryTool::timerCallback()
         scanDriveButton.setEnabled(false);
         scanDirectoryButton.setEnabled(false);
         scanNtfsDeletedButton.setEnabled(false);
+        imageDriveButton.setEnabled(false);
         selectOutputFolderButton.setEnabled(false);
         recoverButton.setEnabled(false);
     }
@@ -525,6 +566,7 @@ void FLPRecoveryTool::timerCallback()
         scanDriveButton.setEnabled(true);
         scanDirectoryButton.setEnabled(true);
         scanNtfsDeletedButton.setEnabled(true);
+        imageDriveButton.setEnabled(true);
         selectOutputFolderButton.setEnabled(true);
         recoverButton.setEnabled(!currentResult.candidates.empty() || !ntfsCandidates.empty());
     }
@@ -724,11 +766,119 @@ void FLPRecoveryTool::scanNtfsDeletedButtonClicked()
 #endif
 }
 
+void FLPRecoveryTool::imageDriveButtonClicked()
+{
+#if JUCE_WINDOWS
+    auto* alert = new juce::AlertWindow(
+        "Create Raw Image (DD)",
+        "Enter what to image:\n"
+        "  A volume, e.g.  C:\n"
+        "  Or a whole physical drive, e.g.  PhysicalDrive0\n\n"
+        "You'll be asked to choose a destination file next \u2014 pick a\n"
+        "location on a DIFFERENT physical drive than the source.\n"
+        "Requires Administrator privileges.",
+        juce::AlertWindow::InfoIcon
+    );
+    alert->addTextEditor("source", "C:");
+    alert->addButton("Next", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    alert->enterModalState(true,
+        juce::ModalCallbackFunction::create(
+            [this, alert](int result)
+            {
+                juce::String sourceInput = alert->getTextEditorContents("source").trim();
+                delete alert;
+
+                if (result != 1 || sourceInput.isEmpty())
+                {
+                    logMessage("Imaging cancelled.");
+                    return;
+                }
+
+                juce::String sourcePath = sourceInput.startsWith("\\\\.\\")
+                    ? sourceInput
+                    : ("\\\\.\\" + sourceInput);
+
+                fileChooser = std::make_unique<juce::FileChooser>(
+                    "Choose destination image file (must be on a different physical drive)",
+                    juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("image.dd"),
+                    "*.dd;*.img;*.raw");
+
+                fileChooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                    [this, sourcePath](const juce::FileChooser& fc)
+                    {
+                        auto destFile = fc.getResult();
+                        if (destFile == juce::File())
+                        {
+                            logMessage("Imaging cancelled — no destination chosen.");
+                            return;
+                        }
+
+                        logBox.clear();
+                        logMessage("Starting raw image: " + sourcePath + " -> " + destFile.getFullPathName());
+                        diskImager.startImaging(sourcePath, destFile);
+                    });
+            }
+        ),
+        true
+    );
+#else
+    logMessage("Raw imaging is only implemented for Windows in this build.");
+#endif
+}
+
+void FLPRecoveryTool::toggleTrimButtonClicked()
+{
+    bool trimEnabled = false;
+    juce::String rawOutput;
+
+    if (!TrimControl::queryTrimEnabled(trimEnabled, rawOutput))
+    {
+        logMessage("Could not query TRIM status (requires administrator privileges).");
+        return;
+    }
+
+    juce::String message = trimEnabled
+        ? "TRIM is currently ENABLED system-wide.\n\n"
+          "Disabling it may improve recovery odds for FUTURE accidental "
+          "deletions on SSDs, at the cost of some SSD performance/lifespan "
+          "while it's off. It will NOT recover anything already trimmed.\n\n"
+          "Disable TRIM now?"
+        : "TRIM is currently DISABLED system-wide.\n\n"
+          "This is not meant to be left off permanently \u2014 it increases "
+          "write amplification and reduces SSD lifespan over time.\n\n"
+          "Re-enable TRIM now?";
+
+    auto* alert = new juce::AlertWindow("TRIM Status", message, juce::AlertWindow::QuestionIcon);
+    alert->addButton(trimEnabled ? "Disable TRIM" : "Re-enable TRIM", 1);
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    alert->enterModalState(true,
+        juce::ModalCallbackFunction::create(
+            [this, alert, trimEnabled](int result)
+            {
+                delete alert;
+                if (result != 1) return;
+
+                juce::String setOutput;
+                if (TrimControl::setTrimEnabled(!trimEnabled, setOutput))
+                    logMessage(juce::String("TRIM ") + (trimEnabled ? "disabled." : "re-enabled.") +
+                        " Note: this affects the whole system, not just one drive.");
+                else
+                    logMessage("Failed to change TRIM setting (requires administrator privileges).");
+            }
+        ),
+        true
+    );
+}
+
 void FLPRecoveryTool::stopButtonClicked()
 {
     scanner.stopScanning();
     ntfsScanner.signalThreadShouldExit();
-    logMessage("Stopping scan...");
+    diskImager.signalThreadShouldExit();
+    logMessage("Stopping...");
     statusLabel.setText("Stopped", juce::dontSendNotification);
 }
 

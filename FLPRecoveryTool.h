@@ -2,6 +2,8 @@
 #include <JuceHeader.h>
 #include "FLPRecoveryScanner.h"
 #include "NtfsScannerThread.h"
+#include "DiskImagerThread.h"
+#include "TrimControl.h"
 
 // Forward declaration
 class BlockVisualizerComponent;
@@ -32,6 +34,8 @@ private:
     juce::TextButton scanDriveButton;
     juce::TextButton scanDirectoryButton;
     juce::TextButton scanNtfsDeletedButton;
+    juce::TextButton imageDriveButton;
+    juce::TextButton toggleTrimButton;
     juce::TextButton stopButton;
     juce::TextButton selectOutputFolderButton;
     juce::TextButton recoverButton;
@@ -53,6 +57,8 @@ private:
 
     NtfsScannerThread ntfsScanner;
     std::vector<NtfsMftRecovery::DeletedFileCandidate> ntfsCandidates;
+
+    DiskImagerThread diskImager;
 
     // ─── Output Folder ──────────────────────────────────────────────────
     juce::File outputFolder;
@@ -81,6 +87,8 @@ private:
     void scanDriveButtonClicked();
     void scanDirectoryButtonClicked();
     void scanNtfsDeletedButtonClicked();
+    void imageDriveButtonClicked();
+    void toggleTrimButtonClicked();
     void stopButtonClicked();
     void selectOutputFolderButtonClicked();
     void recoverButtonClicked();
