@@ -1,7 +1,7 @@
 WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
 It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
 
-2026-07-28 - added Trim detection and disable (havn't tested disabling function yet), added DD clone function, havn't tested yet. The logic hear is that it still may be best practice
+2026-07-28 - added Trim detection and disable (havn't tested disabling function yet), added DD clone function, havn't tested yet. The logic here is that it still may be best practice
 during recovery options to disable trim and create a clone so it made sense to add these two features into the App.
 
 An Introduction on TRIM
