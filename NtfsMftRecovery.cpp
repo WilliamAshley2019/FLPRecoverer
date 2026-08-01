@@ -337,8 +337,11 @@ std::vector<NtfsMftRecovery::ClusterRun> NtfsMftRecovery::parseDataRuns(const ui
     return runs;
 }
 
-bool NtfsMftRecovery::readMftRecord(uint64_t recordIndex, std::vector<uint8_t>& outRecord)
+bool NtfsMftRecovery::ensureRecordCached(uint64_t recordIndex)
 {
+    if (recordIndex >= cacheStartRecord && recordIndex < cacheStartRecord + cacheRecordCount)
+        return true; // already have it
+
     uint32_t clusterSize = getBytesPerCluster();
     uint64_t recordByteOffsetInMft = recordIndex * mftRecordSize;
     uint64_t clusterIndexInMft = recordByteOffsetInMft / clusterSize;
@@ -361,19 +364,35 @@ bool NtfsMftRecovery::readMftRecord(uint64_t recordIndex, std::vector<uint8_t>& 
             uint64_t physicalLcn = run.startLcn + clusterOffsetInRun;
             uint64_t physicalByteOffset = physicalLcn * clusterSize + offsetWithinCluster;
 
-            // Common case: mftRecordSize <= clusterSize, so the record
-            // can't straddle a run boundary. If it somehow needs more
-            // clusters than remain in this run, bail rather than misread.
-            uint64_t clustersNeeded = (offsetWithinCluster + mftRecordSize + clusterSize - 1) / clusterSize;
-            if (clusterOffsetInRun + clustersNeeded > run.clusterCount)
+            // Read as many whole records as we can in one shot, capped at
+            // kRecordsPerCacheChunk and at however much of this run remains
+            // (a batch can't straddle a fragmented $MFT run boundary any
+            // more than a single record could).
+            uint64_t clustersRemainingInRun = run.clusterCount - clusterOffsetInRun;
+            uint64_t bytesRemainingInRun = clustersRemainingInRun * clusterSize - offsetWithinCluster;
+            uint64_t recordsAvailableInRun = bytesRemainingInRun / mftRecordSize;
+
+            uint64_t chunkRecords = juce::jmin((uint64_t)kRecordsPerCacheChunk, recordsAvailableInRun);
+            if (chunkRecords == 0)
             {
                 lastError = "MFT record " + juce::String((int64_t)recordIndex) +
                     " straddles a fragmented $MFT run boundary (not supported yet).";
                 return false;
             }
 
-            return readVolumeBytes(physicalByteOffset, mftRecordSize, outRecord) &&
-                outRecord.size() == mftRecordSize;
+            uint64_t chunkBytes = chunkRecords * mftRecordSize;
+
+            if (!readVolumeBytes(physicalByteOffset, chunkBytes, recordCache) ||
+                recordCache.size() < mftRecordSize)
+            {
+                lastError = "Failed reading MFT record batch starting at " + juce::String((int64_t)recordIndex);
+                cacheRecordCount = 0;
+                return false;
+            }
+
+            cacheStartRecord = recordIndex;
+            cacheRecordCount = recordCache.size() / mftRecordSize;
+            return true;
         }
 
         clustersWalked += run.clusterCount;
@@ -381,6 +400,20 @@ bool NtfsMftRecovery::readMftRecord(uint64_t recordIndex, std::vector<uint8_t>& 
 
     lastError = "MFT record " + juce::String((int64_t)recordIndex) + " is beyond the $MFT's own extents.";
     return false;
+}
+
+bool NtfsMftRecovery::readMftRecord(uint64_t recordIndex, std::vector<uint8_t>& outRecord)
+{
+    if (!ensureRecordCached(recordIndex))
+        return false;
+
+    uint64_t offsetInCache = (recordIndex - cacheStartRecord) * mftRecordSize;
+    if (offsetInCache + mftRecordSize > recordCache.size())
+        return false;
+
+    outRecord.assign(recordCache.begin() + (long)offsetInCache,
+        recordCache.begin() + (long)(offsetInCache + mftRecordSize));
+    return true;
 }
 
 bool NtfsMftRecovery::parseFileRecord(const std::vector<uint8_t>& record, uint64_t recordIndex,

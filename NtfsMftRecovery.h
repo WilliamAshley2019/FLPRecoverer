@@ -110,6 +110,17 @@ private:
 
     std::vector<ClusterRun> mftDataRuns; // the $MFT's own (possibly fragmented) layout
 
+    // Reading one MFT record at a time (1 disk read each) doesn't scale to
+    // a real system drive with hundreds of thousands to millions of
+    // records — this cache reads a batch at once per disk access instead,
+    // cutting syscall count by ~kRecordsPerCacheChunk. readMftRecord's
+    // signature/behavior is unchanged; only its internals batch now.
+    static constexpr uint64_t kRecordsPerCacheChunk = 1024;
+    std::vector<uint8_t> recordCache;
+    uint64_t cacheStartRecord = 0;
+    uint64_t cacheRecordCount = 0;
+    bool ensureRecordCached(uint64_t recordIndex);
+
     bool readBootSector();
     bool readMftsOwnRunlist();
 

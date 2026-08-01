@@ -228,9 +228,36 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
     if (hDrive == INVALID_HANDLE_VALUE)
     {
         DWORD error = GetLastError();
+        juce::String reason;
+        switch (error)
+        {
+        case ERROR_ACCESS_DENIED: // 5
+            reason = "Access denied — this really does need Administrator privileges. "
+                "If you already ran as Administrator, some AV/security software still blocks raw disk access; "
+                "check your antivirus settings, or try temporarily disabling it.";
+            break;
+        case ERROR_FILE_NOT_FOUND: // 2
+        case ERROR_PATH_NOT_FOUND: // 3
+            reason = "That drive path doesn't exist on this machine. Double-check the drive letter/number — "
+                "e.g. \\\\.\\PhysicalDrive0 vs \\\\.\\PhysicalDrive1, or whether the drive letter is actually assigned.";
+            break;
+        case ERROR_SHARING_VIOLATION: // 32
+            reason = "The drive is locked by another process (this can happen with some disk utilities or AV real-time scanning open on it).";
+            break;
+        case ERROR_INVALID_NAME: // 123
+            reason = "The drive path is malformed — expected a form like \\\\.\\PhysicalDrive0 or \\\\.\\C:";
+            break;
+        case ERROR_NOT_READY: // 21
+            reason = "The device isn't ready (e.g. no media in a card reader, or drive still initializing).";
+            break;
+        default:
+            reason = "Not necessarily a privileges issue — this Windows error code isn't one of the common "
+                "permission-related ones, so if you're already running as Administrator, something else is wrong.";
+            break;
+        }
+
         result.lastError = "Failed to open drive: " + drivePath +
-            " (Error: " + juce::String((int)error) +
-            "). Run as Administrator and ensure the drive exists.";
+            " (Windows error " + juce::String((int)error) + "). " + reason;
         log(result.lastError);
         return result;
     }
@@ -264,6 +291,7 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
     uint64_t currentOffset = startOffset;
     uint64_t blocksProcessed = 0;
     DWORD bytesRead = 0;
+    juce::int64 lastLogTimeMs = juce::Time::getMillisecondCounter();
 
     while (currentOffset < fileSize && blocksProcessed < totalBlocks)
     {
@@ -320,6 +348,21 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
             sendProgress(progress, "Scanning block " + juce::String((int)blocksProcessed) +
                 " of " + juce::String((int)totalBlocks));
         }
+
+        // The log box only otherwise gets a line when an actual FLhd match
+        // is found, which on a full drive scan can be a very long silent
+        // stretch that looks identical to being stuck. Log real progress
+        // periodically (time-based, not block-count-based, since read
+        // speed varies) so it's visibly still working.
+        juce::int64 nowMs = juce::Time::getMillisecondCounter();
+        if (nowMs - lastLogTimeMs > 5000)
+        {
+            log("Scanned " + juce::String((double)currentOffset / (1024.0 * 1024.0 * 1024.0), 2) +
+                " GB of " + juce::String((double)fileSize / (1024.0 * 1024.0 * 1024.0), 2) +
+                " GB (" + juce::String((int)(100.0 * currentOffset / (double)fileSize)) + "%), " +
+                juce::String((int)result.validFiles) + " candidate(s) found so far.");
+            lastLogTimeMs = nowMs;
+        }
     }
 
     CloseHandle(hDrive);
@@ -360,6 +403,7 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
     std::vector<uint8_t> blockBuffer(blockSize);
     uint64_t currentOffset = startOffset;
     uint64_t blocksProcessed = 0;
+    juce::int64 lastLogTimeMs = juce::Time::getMillisecondCounter();
 
     while (currentOffset < (uint64_t)fileSize)
     {
@@ -413,6 +457,16 @@ FLPRecovery::ScanResult FLPRecovery::scanDriveWithBlocks(const juce::String& dri
             float progress = (float)currentOffset / (float)fileSize;
             sendProgress(progress, "Scanning block " + juce::String((int)blocksProcessed) +
                 " of " + juce::String((int)totalBlocks));
+        }
+
+        juce::int64 nowMs2 = juce::Time::getMillisecondCounter();
+        if (nowMs2 - lastLogTimeMs > 5000)
+        {
+            log("Scanned " + juce::String((double)currentOffset / (1024.0 * 1024.0 * 1024.0), 2) +
+                " GB of " + juce::String((double)fileSize / (1024.0 * 1024.0 * 1024.0), 2) +
+                " GB (" + juce::String((int)(100.0 * currentOffset / (double)fileSize)) + "%), " +
+                juce::String((int)result.validFiles) + " candidate(s) found so far.");
+            lastLogTimeMs = nowMs2;
         }
     }
 #endif
@@ -834,7 +888,8 @@ juce::String FLPRecovery::makeRecoveredFilename(const Candidate& candidate, int 
 }
 
 int FLPRecovery::recoverAll(const ScanResult& result,
-    const juce::File& outputFolder)
+    const juce::File& outputFolder,
+    std::function<void(const juce::File&)> onFileRecovered)
 {
     int recovered = 0;
 
@@ -847,7 +902,11 @@ int FLPRecovery::recoverAll(const ScanResult& result,
         juce::String filename = makeRecoveredFilename(candidate, (int)i);
 
         if (recoverCandidate(candidate, outputFolder, filename))
+        {
             recovered++;
+            if (onFileRecovered)
+                onFileRecovered(outputFolder.getChildFile(filename));
+        }
     }
 
     log("Recovered " + juce::String(recovered) + " of " +
@@ -887,7 +946,8 @@ bool FLPRecovery::recoverCandidateWithBlocks(const Candidate& candidate,
 // ─── Recover All with Blocks ──────────────────────────────────────────────
 int FLPRecovery::recoverAllWithBlocks(const ScanResult& result,
     const juce::File& outputFolder,
-    bool backupBlocks)
+    bool backupBlocks,
+    std::function<void(const juce::File&)> onFileRecovered)
 {
     int recovered = 0;
 
@@ -900,7 +960,11 @@ int FLPRecovery::recoverAllWithBlocks(const ScanResult& result,
         juce::String filename = makeRecoveredFilename(candidate, (int)i);
 
         if (recoverCandidateWithBlocks(candidate, outputFolder, backupBlocks, filename))
+        {
             recovered++;
+            if (onFileRecovered)
+                onFileRecovered(outputFolder.getChildFile(filename));
+        }
     }
 
     log("Recovered " + juce::String(recovered) + " of " +

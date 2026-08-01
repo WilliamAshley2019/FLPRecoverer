@@ -4,6 +4,10 @@
 #include "NtfsScannerThread.h"
 #include "DiskImagerThread.h"
 #include "TrimControl.h"
+#include "flp.h"
+#include "flphelper.h"
+#include "RecoveryThread.h"
+#include "VssRecovery.h"
 
 // Forward declaration
 class BlockVisualizerComponent;
@@ -36,6 +40,7 @@ private:
     juce::TextButton scanNtfsDeletedButton;
     juce::TextButton imageDriveButton;
     juce::TextButton toggleTrimButton;
+    juce::TextButton checkPreviousVersionsButton;
     juce::TextButton stopButton;
     juce::TextButton selectOutputFolderButton;
     juce::TextButton recoverButton;
@@ -54,11 +59,14 @@ private:
     // ─── Data ────────────────────────────────────────────────────────────
     FLPRecoveryScanner scanner;
     FLPRecovery::ScanResult currentResult;
+    std::vector<bool> flpSelected; // parallel to currentResult.candidates
 
     NtfsScannerThread ntfsScanner;
     std::vector<NtfsMftRecovery::DeletedFileCandidate> ntfsCandidates;
+    std::vector<bool> ntfsSelected; // parallel to ntfsCandidates
 
     DiskImagerThread diskImager;
+    RecoveryThread recoveryThread;
 
     // ─── Output Folder ──────────────────────────────────────────────────
     juce::File outputFolder;
@@ -89,6 +97,7 @@ private:
     void scanNtfsDeletedButtonClicked();
     void imageDriveButtonClicked();
     void toggleTrimButtonClicked();
+    void checkPreviousVersionsButtonClicked();
     void stopButtonClicked();
     void selectOutputFolderButtonClicked();
     void recoverButtonClicked();
@@ -96,6 +105,14 @@ private:
 
     // ─── Logging ────────────────────────────────────────────────────────
     void logMessage(const juce::String& msg);
+
+    // Runs FLPTOOL's semantic parser against a just-recovered file (full
+    // or partial, carved or NTFS-reconstructed) and logs a real content
+    // summary — pattern/note counts, sample references — plus exports a
+    // .mid alongside it if any patterns parsed. Works on partial files
+    // because FL::Project::loadPartial() never returns null; it just
+    // reports how far it got.
+    void analyzeRecoveredFlpFile(const juce::File& flpFile);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLPRecoveryTool)
 };

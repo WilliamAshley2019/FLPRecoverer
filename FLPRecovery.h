@@ -85,7 +85,8 @@ public:
         const juce::String& suggestedName = "");
 
     int recoverAll(const ScanResult& result,
-        const juce::File& outputFolder);
+        const juce::File& outputFolder,
+        std::function<void(const juce::File&)> onFileRecovered = nullptr);
 
     bool recoverCandidateWithBlocks(const Candidate& candidate,
         const juce::File& outputFolder,
@@ -94,7 +95,8 @@ public:
 
     int recoverAllWithBlocks(const ScanResult& result,
         const juce::File& outputFolder,
-        bool backupBlocks = true);
+        bool backupBlocks = true,
+        std::function<void(const juce::File&)> onFileRecovered = nullptr);
 
     // ─── Validation ──────────────────────────────────────────────────────
     bool validateCandidate(Candidate& candidate, const uint8_t* data);

@@ -34,6 +34,21 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
     if (rowNumber >= flpCount + ntfsCount)
         return;
 
+    if (columnId == 6)
+    {
+        bool checked = (rowNumber < flpCount)
+            ? (rowNumber < (int)m_owner.flpSelected.size() && m_owner.flpSelected[rowNumber])
+            : ((rowNumber - flpCount) < (int)m_owner.ntfsSelected.size() && m_owner.ntfsSelected[rowNumber - flpCount]);
+
+        g.setColour(checked ? juce::Colour(0xFF44DD66) : juce::Colour(0xFF666688));
+        juce::Font checkFont(juce::FontOptions(16.0f));
+        g.setFont(checkFont);
+        g.drawText(checked ? juce::String(juce::CharPointer_UTF8("\xE2\x98\x91")) // ☑
+                            : juce::String(juce::CharPointer_UTF8("\xE2\x98\x90")), // ☐
+            juce::Rectangle<int>(0, 0, width, height), juce::Justification::centred);
+        return;
+    }
+
     juce::String text;
     juce::Colour textColour = rowIsSelected ? juce::Colours::white : juce::Colour(0xFFC0C0E0);
 
@@ -128,12 +143,29 @@ void FLPRecoveryTool::TableModel::paintCell(juce::Graphics& g,
     g.drawText(text, textRect, juce::Justification::centredLeft);
 }
 
-void FLPRecoveryTool::TableModel::cellClicked(int rowNumber, int /*columnId*/, const juce::MouseEvent& /*event*/)
+void FLPRecoveryTool::TableModel::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& /*event*/)
 {
     const int flpCount = (int)m_owner.currentResult.candidates.size();
     const int ntfsCount = (int)m_owner.ntfsCandidates.size();
     if (rowNumber < 0 || rowNumber >= flpCount + ntfsCount)
         return;
+
+    if (columnId == 6)
+    {
+        if (rowNumber < flpCount)
+        {
+            if (rowNumber < (int)m_owner.flpSelected.size())
+                m_owner.flpSelected[rowNumber] = !m_owner.flpSelected[rowNumber];
+        }
+        else
+        {
+            int idx = rowNumber - flpCount;
+            if (idx < (int)m_owner.ntfsSelected.size())
+                m_owner.ntfsSelected[idx] = !m_owner.ntfsSelected[idx];
+        }
+        m_owner.resultsTable.repaint();
+        return;
+    }
 
     if (rowNumber < flpCount)
     {
@@ -285,6 +317,7 @@ FLPRecoveryTool::FLPRecoveryTool()
     setupButton(scanNtfsDeletedButton, "Scan Deleted (NTFS)...", juce::Colour(0xFF6A5A2A));
     setupButton(imageDriveButton, "Image Drive (DD)...", juce::Colour(0xFF4A2A6A));
     setupButton(toggleTrimButton, "TRIM Status...", juce::Colour(0xFF6A4A2A));
+    setupButton(checkPreviousVersionsButton, "Check Previous Versions...", juce::Colour(0xFF2A6A6A));
     setupButton(stopButton, "Stop", juce::Colour(0xFF8A2A2A));
     setupButton(selectOutputFolderButton, "Select Output Folder", juce::Colour(0xFF4A4A7A));
     setupButton(recoverButton, "Recover All", juce::Colour(0xFF2A8A5A));
@@ -298,6 +331,7 @@ FLPRecoveryTool::FLPRecoveryTool()
     addAndMakeVisible(scanNtfsDeletedButton);
     addAndMakeVisible(imageDriveButton);
     addAndMakeVisible(toggleTrimButton);
+    addAndMakeVisible(checkPreviousVersionsButton);
     addAndMakeVisible(stopButton);
     addAndMakeVisible(selectOutputFolderButton);
     addAndMakeVisible(recoverButton);
@@ -327,6 +361,7 @@ FLPRecoveryTool::FLPRecoveryTool()
     resultsTable.getHeader().setColour(juce::TableHeaderComponent::textColourId, juce::Colour(0xFFAACCDD));
     resultsTable.getHeader().setColour(juce::TableHeaderComponent::outlineColourId, juce::Colour(0xFF333355));
 
+    resultsTable.getHeader().addColumn("", 6, 32); // checkbox column
     resultsTable.getHeader().addColumn("#", 1, 40);
     resultsTable.getHeader().addColumn("Offset", 2, 130);
     resultsTable.getHeader().addColumn("Size", 3, 100);
@@ -352,6 +387,7 @@ FLPRecoveryTool::FLPRecoveryTool()
     scanNtfsDeletedButton.onClick = [this] { scanNtfsDeletedButtonClicked(); };
     imageDriveButton.onClick = [this] { imageDriveButtonClicked(); };
     toggleTrimButton.onClick = [this] { toggleTrimButtonClicked(); };
+    checkPreviousVersionsButton.onClick = [this] { checkPreviousVersionsButtonClicked(); };
     stopButton.onClick = [this] { stopButtonClicked(); };
     selectOutputFolderButton.onClick = [this] { selectOutputFolderButtonClicked(); };
     recoverButton.onClick = [this] { recoverButtonClicked(); };
@@ -372,9 +408,11 @@ FLPRecoveryTool::FLPRecoveryTool()
             juce::MessageManager::callAsync([this, candidate]
                 {
                     currentResult.candidates.push_back(candidate);
+                    flpSelected.push_back(true);
                     resultsTable.updateContent();
-                    logMessage("Found FLP at offset 0x" +
-                        juce::String::toHexString((int64_t)candidate.offset) +
+                    resultsTable.repaint();
+                    logMessage(">>> TABLE ROW ADDED (" + juce::String((int)currentResult.candidates.size()) +
+                        " total) — offset 0x" + juce::String::toHexString((int64_t)candidate.offset) +
                         " (" + candidate.version + ")");
 
                     if (!currentResult.allBlocks.empty())
@@ -418,6 +456,7 @@ FLPRecoveryTool::FLPRecoveryTool()
             juce::MessageManager::callAsync([this, candidate]
                 {
                     ntfsCandidates.push_back(candidate);
+                    ntfsSelected.push_back(true);
                     resultsTable.updateContent();
                     logMessage("Found deleted file: " + candidate.fileName +
                         " (" + juce::String(candidate.fragmentCount) + " fragment(s))");
@@ -455,6 +494,30 @@ FLPRecoveryTool::FLPRecoveryTool()
             juce::MessageManager::callAsync([this, success]
                 {
                     statusLabel.setText(success ? "Imaging complete" : "Imaging stopped/failed", juce::dontSendNotification);
+                });
+        };
+
+    recoveryThread.onLogCallback = [this](const juce::String& msg)
+        {
+            juce::MessageManager::callAsync([this, msg]
+                {
+                    logMessage(msg);
+                });
+        };
+
+    recoveryThread.onFileRecoveredCallback = [this](const juce::File& f)
+        {
+            juce::MessageManager::callAsync([this, f]
+                {
+                    analyzeRecoveredFlpFile(f);
+                });
+        };
+
+    recoveryThread.onCompleteCallback = [this](int /*totalRecovered*/)
+        {
+            juce::MessageManager::callAsync([this]
+                {
+                    statusLabel.setText("Recovery complete", juce::dontSendNotification);
                 });
         };
 
@@ -499,9 +562,11 @@ void FLPRecoveryTool::resized()
 
     bounds.removeFromTop(6);
 
-    // Row 2: forensics utilities — imaging, TRIM, stop
+    // Row 2: forensics utilities — VSS, imaging, TRIM, stop
     auto utilRow = bounds.removeFromTop(36);
-    int utilButtonWidth = (utilRow.getWidth() - gap * 2 - 90) / 2;
+    int utilButtonWidth = (utilRow.getWidth() - gap * 3 - 90) / 3;
+    checkPreviousVersionsButton.setBounds(utilRow.removeFromLeft(utilButtonWidth));
+    utilRow.removeFromLeft(gap);
     imageDriveButton.setBounds(utilRow.removeFromLeft(utilButtonWidth));
     utilRow.removeFromLeft(gap);
     toggleTrimButton.setBounds(utilRow.removeFromLeft(utilButtonWidth));
@@ -546,7 +611,8 @@ void FLPRecoveryTool::resized()
 
 void FLPRecoveryTool::timerCallback()
 {
-    const bool anyRunning = scanner.isThreadRunning() || ntfsScanner.isThreadRunning() || diskImager.isThreadRunning();
+    const bool anyRunning = scanner.isThreadRunning() || ntfsScanner.isThreadRunning() ||
+        diskImager.isThreadRunning() || recoveryThread.isThreadRunning();
 
     if (anyRunning)
     {
@@ -556,6 +622,7 @@ void FLPRecoveryTool::timerCallback()
         scanDirectoryButton.setEnabled(false);
         scanNtfsDeletedButton.setEnabled(false);
         imageDriveButton.setEnabled(false);
+        checkPreviousVersionsButton.setEnabled(false);
         selectOutputFolderButton.setEnabled(false);
         recoverButton.setEnabled(false);
     }
@@ -567,6 +634,7 @@ void FLPRecoveryTool::timerCallback()
         scanDirectoryButton.setEnabled(true);
         scanNtfsDeletedButton.setEnabled(true);
         imageDriveButton.setEnabled(true);
+        checkPreviousVersionsButton.setEnabled(true);
         selectOutputFolderButton.setEnabled(true);
         recoverButton.setEnabled(!currentResult.candidates.empty() || !ntfsCandidates.empty());
     }
@@ -586,6 +654,8 @@ void FLPRecoveryTool::scanImageButtonClicked()
             {
                 currentResult = FLPRecovery::ScanResult();
                 ntfsCandidates.clear();
+                flpSelected.clear();
+                ntfsSelected.clear();
                 resultsTable.updateContent();
                 if (blockVisualizer != nullptr)
                     blockVisualizer->updateBlocks(currentResult.allBlocks);
@@ -624,12 +694,14 @@ void FLPRecoveryTool::scanDriveButtonClicked()
                     {
                         currentResult = FLPRecovery::ScanResult();
                         ntfsCandidates.clear();
+                        flpSelected.clear();
+                        ntfsSelected.clear();
                         resultsTable.updateContent();
                         if (blockVisualizer != nullptr)
                             blockVisualizer->updateBlocks(currentResult.allBlocks);
                         logBox.clear();
                         logMessage("Scanning drive: " + drivePath);
-                        logMessage("Scanning physical drives requires administrator privileges.");
+                        logMessage("(Raw drive access needs Administrator privileges -- if this fails, the log below will say specifically why.)");
                         scanner.startScanDrive(drivePath);
                     }
                     else
@@ -667,6 +739,8 @@ void FLPRecoveryTool::scanDriveButtonClicked()
                     {
                         currentResult = FLPRecovery::ScanResult();
                         ntfsCandidates.clear();
+                        flpSelected.clear();
+                        ntfsSelected.clear();
                         resultsTable.updateContent();
                         if (blockVisualizer != nullptr)
                             blockVisualizer->updateBlocks(currentResult.allBlocks);
@@ -702,6 +776,8 @@ void FLPRecoveryTool::scanDirectoryButtonClicked()
             {
                 currentResult = FLPRecovery::ScanResult();
                 ntfsCandidates.clear();
+                flpSelected.clear();
+                ntfsSelected.clear();
                 resultsTable.updateContent();
                 if (blockVisualizer != nullptr)
                     blockVisualizer->updateBlocks(currentResult.allBlocks);
@@ -746,6 +822,8 @@ void FLPRecoveryTool::scanNtfsDeletedButtonClicked()
 
                         currentResult = FLPRecovery::ScanResult();
                         ntfsCandidates.clear();
+                        flpSelected.clear();
+                        ntfsSelected.clear();
                         resultsTable.updateContent();
                         logBox.clear();
                         logMessage("Scanning " + volumePath + " for deleted .flp files (NTFS)...");
@@ -828,6 +906,99 @@ void FLPRecoveryTool::imageDriveButtonClicked()
 #endif
 }
 
+void FLPRecoveryTool::checkPreviousVersionsButtonClicked()
+{
+#if JUCE_WINDOWS
+    auto* alert = new juce::AlertWindow(
+        "Check Previous Versions (Volume Shadow Copy)",
+        "Enter the FULL original path of the file you're looking for, e.g.:\n"
+        "  C:\\Users\\Name\\Documents\\Image-Line\\FL Studio\\Projects\\MySong.flp\n\n"
+        "This checks Windows' shadow copy snapshots for an intact earlier\n"
+        "version, completely separately from raw carving/NTFS scanning \u2014\n"
+        "worth trying first, since a snapshot (if one exists) is typically\n"
+        "a complete, unfragmented copy. Requires Administrator privileges.",
+        juce::AlertWindow::InfoIcon
+    );
+    alert->addTextEditor("path", "");
+    alert->addButton("Check", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    alert->enterModalState(true,
+        juce::ModalCallbackFunction::create(
+            [this, alert](int result)
+            {
+                juce::String fullPath = alert->getTextEditorContents("path").trim();
+                delete alert;
+
+                if (result != 1 || fullPath.isEmpty())
+                {
+                    logMessage("Previous-versions check cancelled.");
+                    return;
+                }
+
+                if (fullPath.length() < 3 || fullPath[1] != ':')
+                {
+                    logMessage("Please enter a full path starting with a drive letter, e.g. C:\\...");
+                    return;
+                }
+
+                juce::String driveLetter = fullPath.substring(0, 2);
+                juce::String relativePath = fullPath.substring(3); // past "C:\"
+
+                if (!outputFolder.isDirectory())
+                {
+                    logMessage("Please select an output folder first using 'Select Output Folder'.");
+                    return;
+                }
+
+                logMessage("Listing shadow copies for " + driveLetter + " ...");
+                auto shadows = VssRecovery::listShadowCopies(driveLetter);
+
+                if (shadows.empty())
+                {
+                    logMessage("No shadow copies found for " + driveLetter +
+                        " (System Restore/File History may be off for this drive, or none exist yet).");
+                    return;
+                }
+
+                logMessage("Found " + juce::String((int)shadows.size()) +
+                    " shadow copy/copies — checking each for the file...");
+
+                int foundCount = 0;
+                for (size_t i = 0; i < shadows.size(); ++i)
+                {
+                    const auto& shadow = shadows[i];
+                    juce::String errorMsg;
+                    juce::String destName = juce::File(fullPath).getFileNameWithoutExtension() +
+                        "_shadow" + juce::String((int)i) + "." + juce::File(fullPath).getFileExtension();
+                    juce::File destFile = outputFolder.getChildFile(destName.replaceCharacters("\\/:?\"<>|", "________"));
+
+                    if (VssRecovery::tryRecoverFromShadow(shadow, relativePath, destFile, errorMsg))
+                    {
+                        foundCount++;
+                        logMessage("FOUND in shadow copy from " + shadow.creationTime +
+                            " -> " + destFile.getFileName());
+                        analyzeRecoveredFlpFile(destFile);
+                    }
+                    else
+                    {
+                        logMessage("Shadow copy from " + shadow.creationTime + ": " + errorMsg);
+                    }
+                }
+
+                logMessage(foundCount > 0
+                    ? ("Recovered " + juce::String(foundCount) + " previous version(s) — check the output folder.")
+                    : juce::String("File not found in any shadow copy. It may never have been snapshotted, "
+                        "or the snapshots covering when it existed have since been cycled out."));
+            }
+        ),
+        true
+    );
+#else
+    logMessage("Shadow copy recovery is only implemented for Windows in this build.");
+#endif
+}
+
 void FLPRecoveryTool::toggleTrimButtonClicked()
 {
     bool trimEnabled = false;
@@ -878,6 +1049,7 @@ void FLPRecoveryTool::stopButtonClicked()
     scanner.stopScanning();
     ntfsScanner.signalThreadShouldExit();
     diskImager.signalThreadShouldExit();
+    recoveryThread.signalThreadShouldExit();
     logMessage("Stopping...");
     statusLabel.setText("Stopped", juce::dontSendNotification);
 }
@@ -906,9 +1078,22 @@ void FLPRecoveryTool::selectOutputFolderButtonClicked()
 
 void FLPRecoveryTool::recoverButtonClicked()
 {
-    if (currentResult.candidates.empty() && ntfsCandidates.empty())
+    // Only recover checked rows.
+    FLPRecovery::ScanResult selectedFlpResult;
+    for (size_t i = 0; i < currentResult.candidates.size(); ++i)
+        if (i < flpSelected.size() && flpSelected[i])
+            selectedFlpResult.candidates.push_back(currentResult.candidates[i]);
+
+    std::vector<NtfsMftRecovery::DeletedFileCandidate> selectedNtfsCandidates;
+    for (size_t i = 0; i < ntfsCandidates.size(); ++i)
+        if (i < ntfsSelected.size() && ntfsSelected[i])
+            selectedNtfsCandidates.push_back(ntfsCandidates[i]);
+
+    if (selectedFlpResult.candidates.empty() && selectedNtfsCandidates.empty())
     {
-        logMessage("No candidates to recover.");
+        logMessage((currentResult.candidates.empty() && ntfsCandidates.empty())
+            ? "No candidates to recover."
+            : "No candidates are checked — tick the checkbox next to the files you want to recover.");
         return;
     }
 
@@ -918,65 +1103,17 @@ void FLPRecoveryTool::recoverButtonClicked()
         return;
     }
 
-    int totalRecovered = 0;
+    // Recovery (including the FLPTOOL content analysis that now runs per
+    // file) can take a while over a large batch — runs on a background
+    // thread so the UI stays responsive instead of appearing to freeze.
+    RecoveryThread::Inputs inputs;
+    inputs.flpEngine = &scanner;
+    inputs.ntfsEngine = &ntfsScanner.getEngine();
+    inputs.flpResult = selectedFlpResult;
+    inputs.ntfsCandidates = selectedNtfsCandidates;
+    inputs.outputFolder = outputFolder;
 
-    if (!currentResult.candidates.empty())
-    {
-        logMessage("Recovering " + juce::String((int)currentResult.candidates.size()) +
-            " carved file(s) to: " + outputFolder.getFullPathName());
-        totalRecovered += scanner.recoverAllWithBlocks(currentResult, outputFolder, true);
-    }
-
-    if (!ntfsCandidates.empty())
-    {
-        logMessage("Reconstructing " + juce::String((int)ntfsCandidates.size()) +
-            " NTFS-recovered file(s) to: " + outputFolder.getFullPathName());
-
-        int ntfsRecovered = 0;
-        for (const auto& candidate : ntfsCandidates)
-        {
-            juce::String safeName = candidate.fileName.isNotEmpty()
-                ? candidate.fileName
-                : ("recovered_mft" + juce::String((int64_t)candidate.mftRecordNumber) + ".flp");
-            safeName = safeName.replaceCharacters("\\/:?\"<>|", "________");
-
-            juce::File outFile = outputFolder.getChildFile(safeName);
-            if (outFile.existsAsFile())
-                outFile = outputFolder.getNonexistentChildFile(
-                    outFile.getFileNameWithoutExtension(), outFile.getFileExtension());
-
-            auto report = ntfsScanner.getEngine().reconstructFile(candidate, outFile);
-            if (report.fullyRecovered)
-            {
-                ntfsRecovered++;
-                logMessage("Recovered " + candidate.fileName + ": " + report.detail);
-            }
-            else if (report.bytesRecovered > 0)
-            {
-                // Partial recovery still counts — it's a usable file on
-                // disk, just with some fragment(s) zero-filled.
-                ntfsRecovered++;
-                logMessage("PARTIAL recovery of " + candidate.fileName + " (" +
-                    juce::String((int64_t)report.bytesRecovered) + " of " +
-                    juce::String((int64_t)report.bytesExpected) + " bytes): " + report.detail);
-
-                // Worth checking exactly how much of the file is still
-                // structurally intact, not just how many bytes copied.
-                auto integrity = scanner.analyzeEventStreamIntegrity(outFile);
-                logMessage("Content analysis for " + candidate.fileName + ": " + integrity.detail);
-            }
-            else
-            {
-                logMessage("Failed to reconstruct " + candidate.fileName + ": " + report.detail);
-            }
-        }
-
-        logMessage("Reconstructed " + juce::String(ntfsRecovered) + " of " +
-            juce::String((int)ntfsCandidates.size()) + " NTFS file(s).");
-        totalRecovered += ntfsRecovered;
-    }
-
-    logMessage("Recovered " + juce::String(totalRecovered) + " files total.");
+    recoveryThread.startRecovery(std::move(inputs));
 }
 
 void FLPRecoveryTool::exploreButtonClicked()
@@ -995,6 +1132,53 @@ void FLPRecoveryTool::logMessage(const juce::String& msg)
 {
     logBox.moveCaretToEnd();
     logBox.insertTextAtCaret("[" + juce::Time::getCurrentTime().toString(true, true) + "] " + msg + "\n");
+}
+
+void FLPRecoveryTool::analyzeRecoveredFlpFile(const juce::File& flpFile)
+{
+    FL::Project::LoadReport report;
+    auto project = FL::Project::loadPartial(flpFile, report);
+
+    if (project == nullptr)
+    {
+        // Couldn't even get started (not FLP data at all, or unreadable) —
+        // nothing more to say here.
+        logMessage("  Content analysis: " + report.stopReason);
+        return;
+    }
+
+    if (!report.fullyParsed)
+        logMessage("  Structure: parsed " + juce::String(report.bytesParsed) + " of " +
+            juce::String(report.totalDataSize) + " bytes (" + report.stopReason + ")");
+
+    auto stats = FL::StatsGenerator::generate(*project);
+    logMessage("  Content: " + juce::String(stats.totalChannels) + " channel(s), " +
+        juce::String(stats.totalPatterns) + " pattern(s), " +
+        juce::String(stats.totalNotes) + " note(s), " +
+        juce::String(stats.totalPlaylistItems) + " playlist item(s)" +
+        (stats.samplerChannels > 0 ? (", " + juce::String(stats.samplerChannels) + " sampler channel(s)") : juce::String()));
+
+    // If any patterns parsed at all, a MIDI export is essentially free and
+    // is real usable content even when the rest of the file didn't survive.
+    if (stats.totalNotes > 0)
+    {
+        juce::File midiOut = flpFile.getSiblingFile(flpFile.getFileNameWithoutExtension() + ".mid");
+        if (FL::MidiBridge::exportProjectToMidi(*project, midiOut))
+            logMessage("  Exported recovered notes to: " + midiOut.getFileName());
+    }
+
+    // Resolved sample references, cross-checked against what's actually
+    // still on disk — tells you which samples you'd still need to hunt
+    // down even if the .flp itself is only partially recoverable.
+    FL::SampleScanner sampleScanner(*project);
+    auto sampleFiles = sampleScanner.scan();
+    if (!sampleFiles.empty())
+    {
+        int missing = 0;
+        for (auto& s : sampleFiles) if (!s.exists) missing++;
+        logMessage("  Samples referenced: " + juce::String((int)sampleFiles.size()) +
+            " (" + juce::String(missing) + " not found at their recorded path)");
+    }
 }
 
 // ─── File Drag and Drop ────────────────────────────────────────────────────
@@ -1016,6 +1200,8 @@ void FLPRecoveryTool::filesDropped(const juce::StringArray& files, int, int)
         {
             currentResult = FLPRecovery::ScanResult();
             ntfsCandidates.clear();
+            flpSelected.clear();
+            ntfsSelected.clear();
             resultsTable.updateContent();
             if (blockVisualizer != nullptr)
                 blockVisualizer->updateBlocks(currentResult.allBlocks);
