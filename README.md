@@ -1,6 +1,14 @@
 WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
 It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
 
+
+2026-08-01 - This is nearing a shelving point,
+TO DO listing in the log of files discovered during scan and per line item functions,  the full drive scan functions need to be implemented again. I think a raw scan which will take a long time on a HDD should be done, I also need to sort out the raw scan on SSD which will likley be less useful unless Trim was disabled.
+
+Need to make readme on how to use, particularly 1. disable trim   2. reenable trim if you have your file backup softawre working for flp files.   I sohuld make a better readme manual 
+for what does what essentially volume shadow copy is just another layer of search the MFT is searching the current listing it may help identify files that were written but no longer there or help track down those files (likely won't exist for ssd files but may for hdd files) the drive, image and folder searches are essentially surface scans but might help find files that have been renamed to a non flp file type on advanced searches.
+
+
 2026-07-28 - added Trim detection and disable (havn't tested disabling function yet), added DD clone function, havn't tested yet. The logic here is that it still may be best practice
 during recovery options to disable trim and create a clone so it made sense to add these two features into the App.
 
