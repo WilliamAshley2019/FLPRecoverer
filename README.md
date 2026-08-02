@@ -2,7 +2,36 @@ WARNING THIS IS EXPERIMENTAL WITH KNOWN BUGS!!!!!!!!!!!!!
 It hasn't FUBARed my system yet testing so probably safe :)  Let me know, if you can, if you find any bugs   contact@williamashley.music
 
 
+2026-08-02 
+Start of some instructions for recovery  - First if you think you have deleted something or will delete something turn off trim. If you have lots of space on your drive turn it off in advance of problems, read more about trim below, and do some reserach on it. The disable Trim toggle is an easy way to access it. 
+
+Check FL Studio's own backup folder
+Not built yet, but should be step zero: FL Studio's autosave/backup folder (if enabled) may just already have the file, no forensics needed at all. Fastest possible win when it applies.
+
+Check Previous Versions (VSS)
+Already built. Non-invasive, and when a snapshot exists it's typically a complete, unfragmented copy — the best possible outcome short of the file just existing.
+
+
+Scan Directory
+Already built. Covers "it's not deleted, just misplaced or the path was forgotten" — essentially free to try before assuming anything was actually lost.
+
+Scan Deleted (NTFS)
+Already built. If the file's genuinely gone but the filesystem itself is healthy, $MFT-based recovery gives you the real fragment map — far more reliable and faster than raw carving.
+
+
+Image the drive, then scan the image
+Already built (DD imaging + Scan Image File). The safe way to run the heavier stuff repeatedly without more risk to the original — work from a copy from here on.
+
+
+Scan Physical Drive
+For when the filesystem itself is damaged/reformatted/unreadable, or the $MFT record is gone. Slow, and the right tool only once everything above has failed or doesn't apply.
+
+
+
 2026-08-01 - This is nearing a shelving point,
+
+
+
 TO DO listing in the log of files discovered during scan and per line item functions,  the full drive scan functions need to be implemented again. I think a raw scan which will take a long time on a HDD should be done, I also need to sort out the raw scan on SSD which will likley be less useful unless Trim was disabled.
 
 Need to make readme on how to use, particularly 1. disable trim   2. reenable trim if you have your file backup softawre working for flp files.   I sohuld make a better readme manual 
