@@ -28,6 +28,7 @@ For when the filesystem itself is damaged/reformatted/unreadable, or the $MFT re
 
   To DO
  Use of FLP TOOL for  Sample/asset recovery, not just the .flp itself. FL::SampleScanner already resolves a project's referenced sample paths and tells you which ones exist vs. are missing. For every sample it reports as missing, run it through the exact same tiered recovery process (VSS → directory search → NTFS → carving) that we use for the .flp itself. 
+ https://github.com/WilliamAshley2019/FLProjectFolderOrganizer
 2026-08-01 - This is nearing a shelving point,
 
 
